@@ -68,16 +68,17 @@ envval() {
   v="$(sed -n "s/^$1=//p" .env | head -1 | sed 's/[[:space:]]*#.*$//' | tr -d '[:space:]')"
   printf '%s' "${v:-$2}"
 }
-ENGINE_DATA_DIR="$(envval ENGINE_DATA_DIR ./data)"
-MONITOR_DATA_DIR="$(envval MONITOR_DATA_DIR ./data/monitor)"
+ENGINE_CONFIG_DIR="$(envval ENGINE_CONFIG_DIR ./config/engine)"
+MONITOR_CONFIG_DIR="$(envval MONITOR_CONFIG_DIR ./config/monitor)"
+DOWNLOADS_DIR="$(envval DOWNLOADS_DIR ./data/downloads)"
 
 # 两个容器都以 uid=1000 运行，宿主机目录必须可写，否则容器起不来或写不进文件
-mkdir -p "$ENGINE_DATA_DIR/downloads" "$MONITOR_DATA_DIR"
-chmod -R 777 "$ENGINE_DATA_DIR" "$MONITOR_DATA_DIR" 2>/dev/null \
-  || warn "chmod 失败，若容器报权限错误请手动处理：sudo chmod -R 777 '$ENGINE_DATA_DIR' '$MONITOR_DATA_DIR'"
-info "音乐文件    : $ENGINE_DATA_DIR/downloads"
-info "引擎配置    : $ENGINE_DATA_DIR/{settings.db, cookies.json}"
-info "监控配置    : $MONITOR_DATA_DIR/monitor.db"
+mkdir -p "$ENGINE_CONFIG_DIR" "$MONITOR_CONFIG_DIR" "$DOWNLOADS_DIR"
+chmod -R 777 "$ENGINE_CONFIG_DIR" "$MONITOR_CONFIG_DIR" "$DOWNLOADS_DIR" 2>/dev/null \
+  || warn "chmod 失败，若容器报权限错误请手动处理：sudo chmod -R 777 '$ENGINE_CONFIG_DIR' '$MONITOR_CONFIG_DIR' '$DOWNLOADS_DIR'"
+info "引擎配置/登录态 : $ENGINE_CONFIG_DIR/   (settings.db, cookies.json)"
+info "监控配置        : $MONITOR_CONFIG_DIR/monitor.db"
+info "音乐文件        : $DOWNLOADS_DIR/"
 
 # ── 4. 拉取镜像 ────────────────────────────────────────────────────────────
 info "拉取镜像（国内直连 Docker Hub 常超时，下面若失败请看脚本末尾的加速器提示）..."
@@ -116,10 +117,13 @@ EPORT="$(envval ENGINE_PORT 8085)"
 cat <<EOF
 
 ================================================================
-部署完成  （删容器不丢数据，数据都在宿主机这几处）
-  音乐文件     $ENGINE_DATA_DIR/downloads
-  引擎配置     $ENGINE_DATA_DIR/settings.db、cookies.json
-  监控配置     $MONITOR_DATA_DIR/monitor.db
+部署完成  （删容器不丢数据；配置全部集中在 config/，备份就打包它）
+
+  引擎配置与登录态   $ENGINE_CONFIG_DIR/
+                     ├── settings.db      引擎设置（含 downloadDir）
+                     └── cookies.json     各平台登录态
+  监控配置库         $MONITOR_CONFIG_DIR/monitor.db
+  音乐文件           $DOWNLOADS_DIR/
 
   监控控制台   http://<NAS-IP>:${PORT}
   下载引擎     http://<NAS-IP>:${EPORT}
@@ -127,15 +131,16 @@ cat <<EOF
   首次使用必做（见 README「快速开始」第 4 步）：
    1. 打开引擎页面 :${EPORT}，用日志里的初始化令牌建管理员账号
         ${DC[*]} logs go-music-dl | grep "Web setup token"
-   2. 引擎设置里把「下载目录 / downloadDir」设为 data/downloads
-        · 这里填的是**容器内路径**，默认值就直接落进
-          $ENGINE_DATA_DIR/downloads
+   2. 引擎设置里「下载目录 / downloadDir」保持默认 data/downloads 即可
+        · 它填的是**容器内路径**，默认值正好落在 $DOWNLOADS_DIR/
         · 想看当前生效值：curl -s http://<NAS-IP>:${EPORT}/music/settings
+        · 改成容器内其它路径的话，必须同时在 compose 里加挂载，否则宿主机看不到文件
    3. 扫码登录有会员的平台（这决定能拿到什么音质）
    4. 回到 :${PORT} 建第一个监控
 
   查看日志   ${DC[*]} logs -f monitor
   停止       ${DC[*]} down
   更新       ${DC[*]} pull && ${DC[*]} up -d
+  备份配置   tar czf config-backup-\$(date +%F).tar.gz '$ENGINE_CONFIG_DIR' '$MONITOR_CONFIG_DIR'
 ================================================================
 EOF

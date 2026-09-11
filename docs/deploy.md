@@ -30,8 +30,8 @@
 
 # 2. 在 NAS 的 SSH 里执行
 cd /vol1/1000/docker/music-monitor          # 换成你的实际路径
-mkdir -p data/downloads data/monitor
-chmod -R 777 data
+mkdir -p config/engine config/monitor data/downloads
+chmod -R 777 config data
 docker compose up -d --build                # 关键：--build
 docker compose logs -f monitor
 ```
@@ -217,9 +217,10 @@ PIP_INDEX=https://pypi.tuna.tsinghua.edu.cn/simple
 
 ## 安全提示
 
-镜像里**只有代码，不含任何音乐文件、Cookie、账号配置**——这些全在挂载出来的 `./data/` 里。所以：
+镜像里**只有代码，不含任何音乐文件、Cookie、账号配置**——这些全在挂载出来的
+`config/`（设置与登录态）和 `data/`（音乐文件）里。所以：
 
-- 把镜像推到公开仓库是安全的；但**不要把 `data/` 目录提交到 Git 或打进镜像**
+- 把镜像推到公开仓库是安全的；但**不要把 `config/` 或 `data/` 提交到 Git 或打进镜像**
   （`.gitignore` 已排除，`monitor/.dockerignore` 也已排除）。
 - 如果打算公开分享镜像，请注意上游 go-music-dl 是 **AGPL-3.0**：
   本项目只通过 HTTP 调用它、没有链接其代码，但再分发的合规性请自行确认。
@@ -240,8 +241,8 @@ docker compose pull && docker compose up -d
 docker compose up -d monitor
 ```
 
-升级前建议备份监控数据：
+升级前建议备份配置（几 MB，含全部登录态，不用碰音乐文件）：
 
 ```bash
-cp data/monitor/monitor.db ~/monitor-backup.db
+tar czf config-backup-$(date +%F).tar.gz config/
 ```

@@ -23,8 +23,10 @@ class Settings:
         self.download_concurrency: int = max(1, _int("DOWNLOAD_CONCURRENCY", 3))
         self.default_quality: str = os.getenv("DEFAULT_QUALITY", "lossless").strip().lower()
 
-        # 数据目录
-        self.data_dir: Path = Path(os.getenv("MONITOR_DATA_DIR", "/app/data"))
+        # 配置库所在目录（**容器内路径**）。
+        # 注意变量名不要叫 MONITOR_DATA_DIR —— .env 里那个是「宿主机路径」，
+        # 两者同名很容易被误传进容器，导致把宿主路径当成容器路径用。
+        self.data_dir: Path = Path(os.getenv("MONITOR_DB_DIR", "/app/data"))
         self.data_dir.mkdir(parents=True, exist_ok=True)
         self.db_path: Path = self.data_dir / "monitor.db"
 

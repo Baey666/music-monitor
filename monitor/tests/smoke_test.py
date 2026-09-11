@@ -26,7 +26,7 @@ ENGINE_PORT = 18085
 MONITOR_PORT = 19090
 
 WORKDIR = Path(tempfile.mkdtemp(prefix="music-monitor-test-"))
-os.environ["MONITOR_DATA_DIR"] = str(WORKDIR)
+os.environ["MONITOR_DB_DIR"] = str(WORKDIR)
 os.environ["ENGINE_URL"] = f"http://127.0.0.1:{ENGINE_PORT}"
 os.environ["TICK_SECONDS"] = "15"
 os.environ["HTTP_TIMEOUT"] = "10"

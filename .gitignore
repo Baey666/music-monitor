@@ -2,15 +2,21 @@
 .env
 .env.local
 
-# ── 运行时数据：只保留目录占位，内容一律不入库 ────────────────────────────
-# data/ 里是音乐文件、监控数据库、引擎的 Cookie 登录态，全部属于本机私密数据
+# ── 配置与运行时数据：只保留目录占位，内容一律不入库 ──────────────────────
+# config/ 引擎设置、平台 Cookie 登录态、监控配置库 —— 私密，绝不入库
+# data/   下载的音乐文件
+config/*
+!config/engine/
+!config/monitor/
+config/engine/*
+config/monitor/*
+!config/engine/.gitkeep
+!config/monitor/.gitkeep
+
 data/*
 !data/downloads/
-!data/monitor/
 data/downloads/*
-data/monitor/*
 !data/downloads/.gitkeep
-!data/monitor/.gitkeep
 
 # ── Python ───────────────────────────────────────────────────────────────
 __pycache__/

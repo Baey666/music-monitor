@@ -18,7 +18,7 @@ go-music-dl 本身是一个「搜索 → 下载」的工具：你得先找到歌
 
 | 类别 | 位置 |
 |---|---|
-| **项目内容**（源码 / 部署清单 / 运行时数据） | `monitor/`、`data/`、`docker-compose.yml`、`.env.example` |
+| **项目内容**（源码 / 部署清单 / 运行时数据） | `monitor/`、`config/`、`data/`、`docker-compose.yml`、`.env.example` |
 | **部署与发布**（文档 / 脚本） | `docs/`、`scripts/` |
 | **机器本地工具与登录态** | **不在本仓库内**（如 gh CLI 便携版放在 `Ai项目库\.gh\`） |
 
@@ -27,7 +27,7 @@ music-monitor/
 ├── README.md               # 本文件：项目总览
 ├── LICENSE
 ├── docker-compose.yml      # 两个服务：引擎 + 监控
-├── .env.example            # 端口 / 音质 / 并发 / 镜像仓库地址
+├── .env.example            # 端口 / 音质 / 并发 / 镜像地址 / 落盘路径
 ├── docs/                   # 文档（按用途一分为三）
 │   ├── deploy.md           #   → 部署到 NAS
 │   ├── publish-image.md    #   → 把镜像发到 Docker Hub / 云厂商
@@ -36,9 +36,11 @@ music-monitor/
 │   ├── deploy-nas.sh       #   ★ NAS 上一键部署（拉现成镜像，幂等可重复跑）
 │   ├── build-push.sh       #   Linux / macOS / NAS 构建并推送镜像
 │   └── build-push.ps1      #   Windows PowerShell
-├── data/                   # 运行时数据目录（内容不入库，只留占位）
-│   ├── downloads/          #   ← 下载下来的音乐
+├── config/                 # ★ 所有配置与设置（内容不入库，只留占位）
+│   ├── engine/             #   ← 引擎设置 settings.db + 登录态 cookies.json
 │   └── monitor/            #   ← 监控自己的 SQLite（监控配置、曲目记录）
+├── data/                   # 纯数据（内容不入库，只留占位）
+│   └── downloads/          #   ← 下载下来的音乐文件
 └── monitor/                # 本项目新增的服务
     ├── Dockerfile
     ├── .dockerignore
@@ -96,45 +98,88 @@ music-monitor/
 - Docker + Docker Compose
 - 宿主机终端能执行 `mkdir` / `chmod`
 
-### 1. 初始化数据目录
+### 1. 初始化配置与数据目录
 
-官方镜像以 `uid=1000` 运行，数据目录必须可写，否则容器起不来或写不进文件。
+官方镜像以 `uid=1000` 运行，挂载目录必须可写，否则容器起不来或写不进文件。
 
 ```bash
 cd music-monitor
-mkdir -p data/downloads data/monitor
-chmod -R 777 data
+mkdir -p config/engine config/monitor data/downloads
+chmod -R 777 config data
 ```
 
 > 如果你不用 1000 这个 uid，请同步修改 `docker-compose.yml` 里两个服务的 `user:`。
 
-#### 数据到底落在哪
+#### 配置和数据落在哪
+
+设计原则：**配置归 `config/`，大文件归 `data/`** —— 备份只要打包 `config/`（几 MB），
+不用碰几百 GB 的音乐。
+
+```
+music-monitor/
+├── config/                        ← 所有配置与设置（备份就打包这个目录）
+│   ├── engine/                    → 容器 /home/appuser/data
+│   │   ├── settings.db            引擎设置（含 downloadDir 下载目录这一项）
+│   │   ├── settings.db-wal/-shm   SQLite 日志与共享内存（必须与 db 同目录）
+│   │   └── cookies.json           各平台登录态（决定能拿到什么音质）
+│   └── monitor/                   → 容器 /app/data
+│       └── monitor.db             监控项、曲目记录、运行历史
+└── data/
+    └── downloads/                 → 容器 /home/appuser/data/downloads（音乐文件）
+```
 
 卷挂载语法是 **`宿主机路径:容器内路径`**。**改左边随便改，右边不要动**——那是程序内部写死的。
 
-| 内容 | 容器内路径（别改） | 宿主机默认位置 | 值由谁决定 |
-|---|---|---|---|
-| 音乐文件 | `/home/appuser/data/downloads` | `./data/downloads/` | 引擎设置里的 `downloadDir` |
-| 引擎设置 | `/home/appuser/data/settings.db` | `./data/settings.db` | — |
-| 平台登录态 | `/home/appuser/data/cookies.json` | `./data/cookies.json` | — |
-| 监控配置库 | `/app/data/monitor.db` | `./data/monitor/monitor.db` | — |
+| 内容 | 容器内路径（别改） | 宿主机默认位置 |
+|---|---|---|
+| 引擎设置 | `/home/appuser/data/settings.db` | `config/engine/settings.db` |
+| 平台登录态 | `/home/appuser/data/cookies.json` | `config/engine/cookies.json` |
+| 监控配置库 | `/app/data/monitor.db` | `config/monitor/monitor.db` |
+| 音乐文件 | `/home/appuser/data/downloads` | `data/downloads/` |
+
+> **为什么要用两条挂载拆开引擎的数据？**
+> 引擎把「设置/Cookie」和「下载的音乐」都写在同一个 data 根目录下（无法从镜像里改）。
+> 所以外层挂载接住整个根目录 → `config/engine/`，
+> 再用一条**更深的路径** `/home/appuser/data/downloads` 单独指向 `data/` 把它盖回来。
+> Docker 会按目标路径深度排序挂载，内层优先，这是既定行为。
 
 #### 想换盘 / 换目录
 
-在 `.env` 里改**宿主机路径**即可，两个服务各一个变量：
+在 `.env` 里改**宿主机路径**即可：
 
 ```ini
-ENGINE_DATA_DIR=/vol2/music-data        # 音乐文件 + 引擎设置、登录态，一起搬走
-MONITOR_DATA_DIR=/vol2/monitor-data     # 监控服务的配置库
+ENGINE_CONFIG_DIR=/vol2/mm-config/engine    # 引擎设置 + 登录态
+MONITOR_CONFIG_DIR=/vol2/mm-config/monitor  # 监控配置库
+DOWNLOADS_DIR=/vol2/music                   # 音乐文件（体积大，通常单独放一块盘）
 ```
 
 改完 `docker compose up -d` 生效。⚠️ **先把老数据 `mv` 过去再启动**，
 否则引擎会当成全新安装——所有平台都要重新扫码登录。
 
+#### 从旧版 `data/` 布局迁移
+
+如果你在改成 `config/` 之前已经部署过，数据在 `data/` 里，**先搬家再启动**：
+
+```bash
+cd music-monitor
+docker compose down
+
+mkdir -p config/engine config/monitor
+mv data/settings.db* data/cookies.json config/engine/ 2>/dev/null   # 引擎设置 + 登录态
+mv data/monitor/monitor.db config/monitor/ 2>/dev/null              # 监控配置库
+# data/downloads 原地不动，音乐文件不用搬
+
+chmod -R 777 config data
+docker compose up -d
+```
+
+> 注意 `settings.db*` 的星号：SQLite 的 `-wal` / `-shm` 文件**必须跟着一起搬**，
+> 否则可能丢最近几次设置变更甚至库损坏。
+
 #### 引擎的「下载目录」是另一回事
 
 引擎设置里的 `downloadDir` 填的是**容器内路径**，不是宿主机路径。
-保持默认 `data/downloads` 就会落进 `ENGINE_DATA_DIR/downloads/`。
+保持默认 `data/downloads` 就会落进 `DOWNLOADS_DIR/`。
 
 - 查看当前生效值（该接口是公开的，无需登录）：
   ```bash
@@ -308,8 +353,11 @@ docker compose up -d --build monitor
 # 停掉
 docker compose down
 
-# 备份监控配置与记录
-cp data/monitor/monitor.db ~/monitor-backup.db
+# 备份全部配置与设置（几 MB，推荐）
+tar czf config-backup-$(date +%F).tar.gz config/
+
+# 只备份监控配置与记录
+cp config/monitor/monitor.db ~/monitor-backup.db
 
 # 登录镜像仓库（默认 Docker Hub，密码填 Access Token）
 ./scripts/build-push.sh login
@@ -318,10 +366,16 @@ cp data/monitor/monitor.db ~/monitor-backup.db
 ./scripts/build-push.sh push
 ```
 
-数据说明：
-- `data/monitor/monitor.db` —— 监控配置、曲目记录、运行历史（删掉会重置所有监控）
-- `data/downloads/` —— 音乐文件（和监控服务解耦，删监控不影响文件）
-- `data/settings.db`、`data/cookies.json` —— 引擎的账号、设置与平台登录态
+配置与数据说明：
+
+| 路径 | 内容 | 删掉的后果 |
+|---|---|---|
+| `config/monitor/monitor.db` | 监控配置、曲目记录、运行历史 | 重置所有监控 |
+| `config/engine/settings.db` | 引擎设置（含下载目录、并发等） | 引擎设置回默认 |
+| `config/engine/cookies.json` | 各平台登录态 | **所有平台要重新扫码，音质会掉到最低** |
+| `data/downloads/` | 音乐文件 | 只丢文件，不影响配置（删监控也不影响它） |
+
+> 备份优先打包 `config/`——体积小、又含全部登录态；音乐文件按需另外同步即可。
 
 ---
 

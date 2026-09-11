@@ -29,12 +29,20 @@ services:
     volumes:
       # ── 卷挂载语法： 宿主机路径 : 容器内路径 ──────────────────────────────
       # ★ 改左边（宿主机）随便改；右边（容器内）不要动——那是程序内部写死的路径。
-      # 默认 ./data 下的内容：
-      #     downloads/    下载的音乐文件
-      #     settings.db   引擎设置（含 downloadDir 下载目录）
-      #     cookies.json  各平台登录态（决定能拿到什么音质）
-      # 想放到第二块盘就在 .env 里设 ENGINE_DATA_DIR=/vol2/music-data
-      - ${ENGINE_DATA_DIR:-./data}:/home/appuser/data
+      #
+      # 引擎把「设置、Cookie、SQLite」和「下载的音乐」全写在同一个 data 根目录下，
+      # 所以这里用两条挂载把它拆开：
+      #   外层 接住整个 data 根  → 全部落在 config/engine/（配置与状态）
+      #   内层 单独接住 downloads 子目录 → 指向 data/（音乐文件）
+      # 内层目标路径更深，会覆盖外层同路径，这是 Docker 的既定行为（按路径深度排序挂载）。
+      #
+      # 落盘位置：
+      #   config/engine/settings.db    引擎设置（含 downloadDir）
+      #   config/engine/settings.db-wal / -shm   SQLite 日志与共享内存
+      #   config/engine/cookies.json   各平台登录态（决定能拿到什么音质）
+      #   data/downloads/              下载的音乐文件
+      - ${ENGINE_CONFIG_DIR:-./config/engine}:/home/appuser/data
+      - ${DOWNLOADS_DIR:-./data/downloads}:/home/appuser/data/downloads
     environment:
       - TZ=${TZ:-Asia/Shanghai}
     # 官方镜像以 uid=1000 运行，宿主机 data 目录需要可写（见 README 的初始化步骤）
@@ -65,7 +73,8 @@ services:
     volumes:
       # 监控自身的数据（SQLite 配置库：监控项、曲目记录、运行历史），
       # 与引擎数据分开，避免互相干扰。同样只改左边。
-      - ${MONITOR_DATA_DIR:-./data/monitor}:/app/data
+      # SQLite 的 db / -wal / -shm 必须同目录，所以这边整体挂目录、不单独挂文件。
+      - ${MONITOR_CONFIG_DIR:-./config/monitor}:/app/data
     environment:
       # 引擎地址（容器内网络，无需改动）
       - ENGINE_URL=http://music-dl:8080
