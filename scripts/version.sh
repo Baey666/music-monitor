@@ -112,7 +112,8 @@ add_changelog_entry() {
     warn "没有 $CHANGELOG，跳过更新日志（建议补一个）"
     return 0
   fi
-  tmp="$(mktemp)"
+  tmp="$ROOT/.changelog.tmp.$$"
+  trap 'rm -f "$tmp"' EXIT
   if grep -q '^## \[Unreleased\]' "$CHANGELOG"; then
     awk -v ver="$v" -v date="$date" '
       { print }

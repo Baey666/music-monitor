@@ -66,6 +66,28 @@ def _as_candidate(song: dict[str, Any], *, primary: bool, score: float) -> dict[
     }
 
 
+# 试听片段和现场录音经常能被搜索接口返回，但不应混入正式歌曲下载。
+_VERSION_MARKERS = re.compile(
+    r"(?:live|现场|演唱会|演唱會|跨年|音乐会|音樂會|演出|acoustic|demo|试听|試聽|片段|snippet|remix)",
+    re.IGNORECASE,
+)
+
+
+def _reject_candidate(candidate: dict[str, Any], reference_duration: int = 0) -> str:
+    """返回淘汰原因；空字符串表示候选可继续探测。"""
+    text = " ".join(str(candidate.get(k) or "") for k in ("name", "album"))
+    if _VERSION_MARKERS.search(text):
+        return "标题或专辑标记为现场/演唱会/试听/混音版本"
+
+    duration = int(candidate.get("duration") or 0)
+    reference = int(reference_duration or 0)
+    if duration and duration <= 75:
+        return f"时长仅 {duration} 秒，疑似试听片段"
+    if duration and reference and abs(duration - reference) > max(10, round(reference * 0.15)):
+        return f"时长 {duration} 秒与原曲 {reference} 秒不匹配"
+    return ""
+
+
 # --------------------------------------------------------------------------- 发现
 async def discover(engine: Engine, mon: dict[str, Any]) -> tuple[list[dict[str, Any]], list[str]]:
     """按监控类型抓取本轮的全部曲目。返回 (songs, warnings)。"""
@@ -165,15 +187,23 @@ async def _pick_best(
 ) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
     """返回 (选中的候选, 评估结果)。评估结果里记录了实际码率/格式。"""
     primary = _as_candidate(song, primary=True, score=1.0)
-    primary_eval = q.evaluate(quality, await engine.inspect(primary))
-    log_lines.append(
-        f"  原始源 {primary['source']} 探测：{'有效' if primary_eval['valid'] else '无效'} "
-        f"{primary_eval['bitrate']} {primary_eval['size']}"
-    )
+    reference_duration = primary["duration"]
+    primary_rejection = _reject_candidate(primary, reference_duration)
+    if primary_rejection:
+        log_lines.append(f"  原始源 {primary['source']} 跳过：{primary_rejection}")
+        primary_eval = {"valid": False, "satisfies": False, "bitrate": "-", "size": "", "kbps": None}
+    else:
+        primary_eval = q.evaluate(quality, await engine.inspect(primary))
+        log_lines.append(
+            f"  原始源 {primary['source']} 探测：{'有效' if primary_eval['valid'] else '无效'} "
+            f"{primary_eval['bitrate']} {primary_eval['size']}"
+        )
     if primary_eval["satisfies"]:
         return primary, primary_eval
 
-    candidates: list[tuple[dict[str, Any], dict[str, Any]]] = [(primary, primary_eval)]
+    candidates: list[tuple[dict[str, Any], dict[str, Any]]] = []
+    if not primary_rejection:
+        candidates.append((primary, primary_eval))
 
     # 1) 让引擎在其它平台找最接近的可用版本（自带相似度 + 时长 + 可播放校验）
     try:
@@ -185,7 +215,10 @@ async def _pick_best(
         alt = None
     if alt and alt.get("id") and alt.get("source") and alt.get("source") != primary["source"]:
         cand = _as_candidate(alt, primary=False, score=float(alt.get("score") or 0.0))
-        if cand["similarity"] >= 0.75:
+        rejection = _reject_candidate(cand, reference_duration)
+        if rejection:
+            log_lines.append(f"  换源候选 {cand['source']} 跳过：{rejection}")
+        elif cand["similarity"] >= 0.75:
             ev = q.evaluate(quality, await engine.inspect(cand))
             log_lines.append(f"  换源候选 {cand['source']} 相似度{cand['similarity']}：{ev['bitrate']} {ev['size']}")
             if ev["valid"]:
@@ -219,6 +252,10 @@ async def _pick_best(
             if src in seen_src:
                 continue
             cand = _as_candidate(f, primary=False, score=score)
+            rejection = _reject_candidate(cand, reference_duration)
+            if rejection:
+                log_lines.append(f"  搜索候选 {src} 跳过：{rejection}")
+                continue
             ev = q.evaluate(quality, await engine.inspect(cand))
             checked += 1
             log_lines.append(f"  搜索候选 {src} 相似度{score}：{ev['bitrate']} {ev['size']}")
