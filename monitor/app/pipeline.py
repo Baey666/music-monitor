@@ -409,6 +409,12 @@ async def run_monitor(db: Database, engine: Engine, mon: dict[str, Any]) -> dict
             "skipped": skipped, "failed": failed, "warnings": warnings[:10],
         }
 
+    except asyncio.CancelledError:
+        # 容器停止或任务被取消时也必须收尾，否则网页会永久显示 running。
+        db.finish_run(run_id, status="error", found=found, new_items=new_items, downloaded=downloaded,
+                      skipped=skipped, failed=failed, message="任务被取消，中断下载", log="\n".join(log_lines))
+        _reschedule(db, mon)
+        raise
     except Exception as exc:  # noqa: BLE001
         log.exception("监控 %s 执行异常", mon.get("name"))
         db.finish_run(run_id, status="error", found=found, new_items=new_items, downloaded=downloaded,

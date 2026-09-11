@@ -12,6 +12,7 @@ from .scheduler import Scheduler
 db = Database(str(settings.db_path))
 engine = Engine()
 scheduler = Scheduler(db, engine)
+db.recover_running_runs()
 
 DEFAULTS: dict[str, object] = {
     "default_quality": settings.default_quality,

@@ -226,6 +226,15 @@ class Database:
         return m
 
     # ---------------- runs ----------------
+    def recover_running_runs(self) -> int:
+        """容器重启后收尾上次未完成的运行，避免网页永久显示 running。"""
+        cur = self.execute(
+            "UPDATE runs SET finished_at = ?, status = 'error', message = ?, log = CASE WHEN log = '' THEN ? ELSE log END "
+            "WHERE status = 'running'",
+            (now_iso(), "服务重启，中断了上次运行；可重新执行监控", "服务重启，中断了上次运行"),
+        )
+        return cur.rowcount
+
     def start_run(self, monitor_id: int) -> int:
         cur = self.execute(
             "INSERT INTO runs(monitor_id, started_at, status) VALUES(?,?,'running')",
