@@ -4,6 +4,7 @@
 #  用法（在项目根目录执行）：
 #    powershell -ExecutionPolicy Bypass -File scripts\build-push.ps1 local   # 本地构建并启动
 #    powershell -ExecutionPolicy Bypass -File scripts\build-push.ps1 load    # 构建到本地
+#    powershell -ExecutionPolicy Bypass -File scripts\build-push.ps1 login   # 登录镜像仓库（默认 Docker Hub）
 #    powershell -ExecutionPolicy Bypass -File scripts\build-push.ps1 push    # 多架构构建并推送
 #    powershell -ExecutionPolicy Bypass -File scripts\build-push.ps1 save    # 导出 tar 供离线导入
 #    powershell -ExecutionPolicy Bypass -File scripts\build-push.ps1 help
@@ -12,8 +13,10 @@
 # ============================================================================
 param(
   [Parameter(Position = 0)]
-  [ValidateSet('local', 'load', 'push', 'save', 'help')]
-  [string]$Command = 'help'
+  [ValidateSet('local', 'load', 'login', 'push', 'save', 'help')]
+  [string]$Command = 'help',
+  [Parameter(Position = 1)]
+  [string]$Registry = 'docker.io'
 )
 
 # 注意：这里刻意用 Continue 而不是 Stop。
@@ -60,6 +63,15 @@ function Assert-Docker {
   if ($LASTEXITCODE -ne 0) { Fail 'docker 守护进程不可用（未启动或权限不足）。' }
 }
 
+# 从镜像地址里反推 registry 主机名。
+# Docker 的判定规则：第一段含 . 或 : 、或者等于 localhost，才算 registry 主机；
+# 否则按 Docker Hub 处理（如 baey666/music-monitor 的第一段是命名空间，不是主机）。
+function Get-Registry($image) {
+  $first = $image.Split('/')[0]
+  if ($first -match '[.:]' -or $first -eq 'localhost') { return $first }
+  return 'docker.io'
+}
+
 switch ($Command) {
   'local' {
     Assert-Docker
@@ -79,10 +91,32 @@ switch ($Command) {
     Write-Step "完成。docker images 里可以看到 $Image"
   }
 
+  'login' {
+    Assert-Docker
+    Write-Step "登录镜像仓库：$Registry"
+    if ($Registry -eq 'docker.io') {
+      Write-Host 'Docker Hub 登录提示：' -ForegroundColor Yellow
+      Write-Host '  · 用户名 = 你的 Docker ID（不是邮箱，也不是昵称）'
+      Write-Host '  · 密码栏请填 Access Token，不要填网页登录密码（2024 起密码登录已被禁用）'
+      Write-Host '    获取地址：https://hub.docker.com/settings/security -> New Access Token'
+      Write-Host '    权限选 Read & Write 即可'
+      docker login
+    } else {
+      docker login $Registry
+    }
+    if ($LASTEXITCODE -ne 0) { Fail '登录失败。' }
+    Write-Step '登录成功。接下来可以执行 push 子命令。'
+  }
+
   'push' {
     Assert-Docker
     if ($Image -like 'music-monitor*' -or $Image -eq 'music-monitor') {
       Fail '请先在 .env 里把 MONITOR_IMAGE 改成带命名空间的仓库地址，例如 yourname/music-monitor:latest'
+    }
+    $reg = Get-Registry $Image
+    if ($reg -eq 'docker.io') {
+      Write-Host '提示：目标仓库是 Docker Hub。若还没登录，先执行 scripts\build-push.ps1 login' -ForegroundColor Yellow
+      Write-Host '      免费账号私有仓库只能有 1 个；设为公开则数量不限。' -ForegroundColor Yellow
     }
     Write-Step "多架构构建并推送 -> $Image  （平台：$Platforms）"
     Write-Host '第一次用 buildx 多架构会提示安装 QEMU 模拟器，属正常现象。' -ForegroundColor Yellow
@@ -91,7 +125,11 @@ switch ($Command) {
     docker buildx use monitor-builder
     docker buildx build --platform $Platforms --build-arg "APP_VERSION=$Version" -t $Image --push -f monitor/Dockerfile monitor
     if ($LASTEXITCODE -ne 0) { Fail '推送失败。' }
-    Write-Step '推送完成。在 NAS 上执行：docker compose pull; docker compose up -d'
+    Write-Step '推送完成。'
+    Write-Host '在 NAS / 目标机器上：'
+    Write-Host "  docker pull $Image"
+    Write-Host '  # 并把 NAS 上 .env 的 MONITOR_IMAGE 改成同一个地址'
+    Write-Host '  docker compose pull; docker compose up -d'
   }
 
   'save' {
@@ -107,8 +145,11 @@ switch ($Command) {
   }
 
   default {
-    Get-Content $PSCommandPath | Select-Object -First 12 |
-      ForEach-Object { $_ -replace '^# ?', '' }
+    # 打印文件头部注释块（遇到第一行非注释即停止）——这样加子命令时不用改行号
+    foreach ($line in (Get-Content $PSCommandPath)) {
+      if ($line -notmatch '^#') { break }
+      Write-Host ($line -replace '^# ?', '')
+    }
     Write-Host ''
     Write-Host "当前镜像地址：$Image"
     Write-Host "当前目标架构：$Platforms"

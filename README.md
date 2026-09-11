@@ -166,14 +166,14 @@ docker compose logs -f monitor
 
 ### 方案 B：构建镜像推到仓库，NAS 只拉镜像（多台机器 / 长期维护推荐）
 
-需要一个镜像仓库。国内**强烈建议用云厂商的**，Docker Hub 经常连不上：
+需要一个镜像仓库。国内用云厂商的通常最省心；Docker Hub 也能用，但要配镜像加速，见下面的专项说明。
 
 | 仓库 | 地址格式 |
 |---|---|
 | 阿里云 ACR | `registry.cn-hangzhou.aliyuncs.com/你的命名空间/music-monitor:latest` |
 | 腾讯云 TCR | `ccr.ccs.tencentyun.com/你的命名空间/music-monitor:latest` |
 | 华为云 SWR | `swr.cn-north-4.myhuaweicloud.com/你的命名空间/music-monitor:latest` |
-| Docker Hub | `你的账号/music-monitor:latest` |
+| Docker Hub | `你的DockerID/music-monitor:latest`（不带主机名） |
 | 私有 registry | `192.168.1.10:5000/music-monitor:latest` |
 
 **第 1 步：在构建机上改 `.env`**
@@ -234,6 +234,97 @@ docker compose up -d
 > compose 文件里 `image:` 和 `build:` 同时存在时：`up -d --build` 走本地构建，
 > `pull && up -d` 直接用远端镜像。想彻底禁止在 NAS 上构建，把 `monitor` 服务里的
 > `build:` 三行删掉即可（保留 `image:`）。
+
+#### 如果你用 Docker Hub 做仓库（专项说明）
+
+Docker Hub 的地址格式最短，但有两个坑：**登录不能再用密码**、**国内直连经常超时**。
+
+**1. 准备账号与 Access Token**
+
+- 注册/登录 https://hub.docker.com ，记下你的 **Docker ID**（不是邮箱，也不是昵称）。
+- 打开 https://hub.docker.com/settings/security → **New Access Token**，
+  描述随便填（如 `music-monitor-push`），权限选 **Read & Write**，
+  生成后**立刻复制**（只显示一次，关掉就再也看不到）。
+- 这个 Token 就是下面 `docker login` 要输入的密码。用网页登录密码会直接报错——
+  Docker 从 2024 年起已禁用密码登录。
+
+**2. 写出镜像地址**
+
+Docker Hub 的地址**不带主机名**，第一段就是你的 Docker ID 或组织名：
+
+```ini
+MONITOR_IMAGE=你的DockerID/music-monitor:latest
+```
+
+**3. 登录并推送**
+
+```bash
+# Linux / macOS / NAS
+./scripts/build-push.sh login      # 用户名填 Docker ID，密码填 Access Token
+./scripts/build-push.sh push
+
+# Windows（项目根目录）
+powershell -ExecutionPolicy Bypass -File scripts\build-push.ps1 login
+powershell -ExecutionPolicy Bypass -File scripts\build-push.ps1 push
+```
+
+不想用脚本，等价的原始命令：
+
+```bash
+docker login -u 你的DockerID                        # 密码填 Access Token
+docker buildx create --name monitor-builder --use   # 首次执行一次
+docker buildx build --platform linux/amd64,linux/arm64 \
+  --build-arg APP_VERSION=1.0.0 \
+  -t 你的DockerID/music-monitor:latest \
+  --push -f monitor/Dockerfile monitor
+```
+
+> **仓库是自动创建的**：第一次 `push` 成功时，Docker Hub 会自动建好
+> `你的DockerID/music-monitor` 这个仓库，默认 **public**。
+> 想改成 private，进仓库页 Settings → Visibility 切换
+> （免费账号总共只能有 **1 个** private，public 不限）。
+
+**4. 在 NAS 上拉取**
+
+```bash
+docker pull 你的DockerID/music-monitor:latest
+# 并让 NAS 上的 .env 里 MONITOR_IMAGE 填同一个地址
+docker compose pull && docker compose up -d
+```
+
+public 仓库不需要登录；private 仓库在 NAS 上也要先 `docker login`。
+
+**5. 免费额度与限流**
+
+| 项目 | 免费账号 |
+|---|---|
+| 私有仓库数量 | 1 个 |
+| 拉取限流（未登录） | 每 IP / 6 小时 100 次 |
+| 拉取限流（已登录） | 每账号 / 6 小时 200 次 |
+
+个人自用完全够。真撞到限流，就在 NAS 上 `docker login` 一次（按账号计额度，比按 IP 宽松），
+或者改用云厂商的免费个人版镜像服务。
+
+**6. 国内加速（拉取慢必看）**
+
+`push` 走上行一般没问题，但 **`pull` 经常超时**。在 NAS / 构建机的
+`/etc/docker/daemon.json` 里加加速地址：
+
+```json
+{
+  "registry-mirrors": ["https://<你的ID>.mirror.aliyuncs.com"]
+}
+```
+
+阿里云的个人专属加速地址在**容器镜像服务控制台 → 镜像工具 → 镜像加速器**里，免费。
+改完重启 Docker：
+
+```bash
+sudo systemctl restart docker
+# 群晖/威联通在「容器」套件设置里改，或 SSH 进来执行上一行
+```
+
+> 加速器只代理**拉取** `docker.io` 的公共镜像，不加速 `push`，也不代理 private 仓库。
 
 ### 方案 C：NAS 完全不能上网 → 导出镜像文件离线导入
 
@@ -430,6 +521,12 @@ docker compose down
 
 # 备份监控配置与记录
 cp data/monitor/monitor.db ~/monitor-backup.db
+
+# 登录镜像仓库（默认 Docker Hub，密码填 Access Token）
+./scripts/build-push.sh login
+
+# 构建并推送镜像（多架构）
+./scripts/build-push.sh push
 ```
 
 数据说明：
