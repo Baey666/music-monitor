@@ -120,25 +120,64 @@ docker manifest inspect 你的仓库地址/music-monitor:latest
 
 ## 国内网络注意事项
 
-拉取/推送慢或超时，给 Docker 守护进程配镜像加速（NAS 上编辑 `/etc/docker/daemon.json`）：
+国内构建遇到的网络问题分**三层**，要分别处理。只配一层往往还是会卡住：
+
+| 层次 | 卡在哪 | 配置位置 |
+|---|---|---|
+| ① 拉基础镜像 | `python:3.12-slim`、`guohuiyuan/go-music-dl` 拉不下来 | Docker 守护进程的 `registry-mirrors` |
+| ② 构建容器内 apt | `apt-get install tzdata curl` 超时 | `.env` 的 `APT_MIRROR` |
+| ③ 构建容器内 pip | `pip install -r requirements.txt` 超时 | `.env` 的 `PIP_INDEX` |
+
+### ① 镜像加速器（管「拉基础镜像」）
+
+先在 NAS 上验证 Docker Hub 是否可达：
+
+```bash
+curl -sS -o /dev/null -w "%{http_code}\n" --max-time 8 https://registry-1.docker.io/v2/
+```
+
+- 返回 `401` → 通，可以跳过这节。
+- 返回 `000` / 超时 → **必须配加速器**，否则 `docker compose up -d --build`
+  一定卡死在拉基础镜像那一步。
+
+编辑 `/etc/docker/daemon.json`：
 
 ```json
 {
   "registry-mirrors": [
     "https://docker.m.daocloud.io",
-    "https://dockerproxy.com",
-    "https://mirror.ccs.tencentyun.com"
+    "https://docker.1ms.run",
+    "https://docker.xuanyuan.me"
   ]
 }
 ```
 
-改完 `systemctl restart docker`（飞牛 / 群晖在 Docker 应用设置里改）。
+重启并验证：
 
-pip 装依赖慢，可以在 `monitor/Dockerfile` 的 `pip install` 前加一行换源：
-
-```dockerfile
-RUN pip config set global.index-url https://pypi.tuna.tsinghua.edu.cn/simple
+```bash
+sudo systemctl restart docker
+docker info | grep -A 4 "Registry Mirrors"
 ```
+
+> 上面三个是实测可用的（`docker.m.daocloud.io` 响应最快）。
+> `docker.m.mirrors.ustc.edu.cn`、`hub-mirror.c.163.com` 等老牌加速器**已停止服务**，别再填。
+> 飞牛 / 群晖也可以直接在 Docker 应用的设置界面里改，效果一样。
+
+⚠️ 加速器只代理**拉取 docker.io 的公共镜像**：它**不加速 `docker push`**，也不代理私有仓库。
+所以国内网络下"推镜像到 Docker Hub"通常仍然不通 —— 要推仓库建议改用
+国内的阿里云 ACR / 腾讯云 TCR，见 [publish-image.md](publish-image.md)。
+
+### ②③ 构建期源加速（管「容器内的 apt / pip」）
+
+在 `.env` 里打开这两项，compose 会自动透传给 Dockerfile 的构建参数：
+
+```ini
+APT_MIRROR=mirrors.aliyun.com
+PIP_INDEX=https://pypi.tuna.tsinghua.edu.cn/simple
+```
+
+两项**留空即用官方源**，所以非国内环境不用管。
+不再需要手动改 Dockerfile —— 之前文档里那句"在 pip install 前加一行换源"已经不需要了。
 
 ---
 

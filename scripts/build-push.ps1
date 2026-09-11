@@ -57,6 +57,13 @@ $Version = if ($envMap['APP_VERSION']) { $envMap['APP_VERSION'] } else { '1.0.0'
 $Tarball = if ($envMap['TARBALL']) { $envMap['TARBALL'] } else { 'music-monitor.tar' }
 $MonitorPort = if ($envMap['MONITOR_PORT']) { $envMap['MONITOR_PORT'] } else { '9090' }
 
+# 构建期源加速（国内构建时在 .env 里设 APT_MIRROR / PIP_INDEX，留空则用官方源）
+$AptMirror = $envMap['APT_MIRROR']
+$PipIndex  = $envMap['PIP_INDEX']
+$buildArgs = @('--build-arg', "APP_VERSION=$Version")
+if ($AptMirror) { $buildArgs += @('--build-arg', "APT_MIRROR=$AptMirror") }
+if ($PipIndex)  { $buildArgs += @('--build-arg', "PIP_INDEX=$PipIndex") }
+
 function Assert-Docker {
   if (-not (Get-Command docker -ErrorAction SilentlyContinue)) { Fail '没有找到 docker，请先安装 Docker Desktop / Docker Engine。' }
   docker info *> $null
@@ -86,7 +93,7 @@ switch ($Command) {
   'load' {
     Assert-Docker
     Write-Step "构建本机架构镜像 -> $Image"
-    docker build --build-arg "APP_VERSION=$Version" -t $Image -f monitor/Dockerfile monitor
+    docker build @buildArgs -t $Image -f monitor/Dockerfile monitor
     if ($LASTEXITCODE -ne 0) { Fail '镜像构建失败。' }
     Write-Step "完成。docker images 里可以看到 $Image"
   }
@@ -123,7 +130,7 @@ switch ($Command) {
     docker buildx inspect monitor-builder *> $null
     if ($LASTEXITCODE -ne 0) { docker buildx create --name monitor-builder --use | Out-Null }
     docker buildx use monitor-builder
-    docker buildx build --platform $Platforms --build-arg "APP_VERSION=$Version" -t $Image --push -f monitor/Dockerfile monitor
+    docker buildx build --platform $Platforms @buildArgs -t $Image --push -f monitor/Dockerfile monitor
     if ($LASTEXITCODE -ne 0) { Fail '推送失败。' }
     Write-Step '推送完成。'
     Write-Host '在 NAS / 目标机器上：'
@@ -135,7 +142,7 @@ switch ($Command) {
   'save' {
     Assert-Docker
     Write-Step "构建本机架构镜像并导出 -> $Tarball"
-    docker build --build-arg "APP_VERSION=$Version" -t $Image -f monitor/Dockerfile monitor
+    docker build @buildArgs -t $Image -f monitor/Dockerfile monitor
     if ($LASTEXITCODE -ne 0) { Fail '镜像构建失败。' }
     docker save -o $Tarball $Image
     if ($LASTEXITCODE -ne 0) { Fail '导出失败。' }

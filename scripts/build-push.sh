@@ -30,6 +30,11 @@ PLATFORMS="${PLATFORMS:-linux/amd64,linux/arm64}"
 VERSION="${APP_VERSION:-1.0.0}"
 TARBALL="${TARBALL:-music-monitor.tar}"
 
+# 构建期源加速（国内构建时在 .env 里设 APT_MIRROR / PIP_INDEX，留空则用官方源）
+BUILD_ARGS=(--build-arg "APP_VERSION=$VERSION")
+[ -n "${APT_MIRROR:-}" ] && BUILD_ARGS+=(--build-arg "APT_MIRROR=$APT_MIRROR")
+[ -n "${PIP_INDEX:-}" ] && BUILD_ARGS+=(--build-arg "PIP_INDEX=$PIP_INDEX")
+
 say() { printf '\n\033[36m==> %s\033[0m\n' "$*"; }
 die() { printf '\n\033[31m错误：%s\033[0m\n' "$*" >&2; exit 1; }
 
@@ -63,7 +68,7 @@ case "${1:-help}" in
     need_docker
     say "构建本机架构镜像 → $IMAGE"
     docker build \
-      --build-arg APP_VERSION="$VERSION" \
+      "${BUILD_ARGS[@]}" \
       -t "$IMAGE" \
       -f monitor/Dockerfile monitor
     say "完成。docker images 里可以看到 $IMAGE"
@@ -105,7 +110,7 @@ TIP
     docker buildx use monitor-builder
     docker buildx build \
       --platform "$PLATFORMS" \
-      --build-arg APP_VERSION="$VERSION" \
+      "${BUILD_ARGS[@]}" \
       -t "$IMAGE" \
       --push \
       -f monitor/Dockerfile monitor
@@ -120,7 +125,7 @@ TIP
     need_docker
     say "构建本机架构镜像并导出 → $TARBALL"
     docker build \
-      --build-arg APP_VERSION="$VERSION" \
+      "${BUILD_ARGS[@]}" \
       -t "$IMAGE" \
       -f monitor/Dockerfile monitor
     docker save -o "$TARBALL" "$IMAGE"

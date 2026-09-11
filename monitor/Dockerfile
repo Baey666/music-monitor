@@ -1,5 +1,14 @@
 FROM python:3.12-slim
 
+# ── 构建期源加速（可选，留空即用官方源）──────────────────────────────────
+# 国内构建强烈建议在 .env 里打开这两项，否则 apt 和 pip 会非常慢甚至超时：
+#   APT_MIRROR=mirrors.aliyun.com
+#   PIP_INDEX=https://pypi.tuna.tsinghua.edu.cn/simple
+# 注意：这只管「构建过程」的源；拉基础镜像 python:3.12-slim 走的是 Docker 守护进程的
+# registry-mirrors，两者要分别配置（见 docs/deploy.md 的「国内网络注意事项」）。
+ARG APT_MIRROR=
+ARG PIP_INDEX=
+
 # OCI 元数据（便于镜像仓库展示与追溯）
 ARG APP_VERSION=1.0.0
 LABEL org.opencontainers.image.title="music-monitor" \
@@ -15,6 +24,15 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 
 WORKDIR /app
 
+# 可选：把 Debian 软件源换成国内镜像（新版 deb822 与旧版 sources.list 两种格式都处理）
+RUN if [ -n "$APT_MIRROR" ]; then \
+      for f in /etc/apt/sources.list /etc/apt/sources.list.d/debian.sources; do \
+        if [ -f "$f" ]; then \
+          sed -i "s|deb.debian.org|$APT_MIRROR|g; s|security.debian.org|$APT_MIRROR|g" "$f"; \
+        fi; \
+      done; \
+    fi
+
 # 时区与基础工具（curl 便于容器内自检）
 RUN apt-get update \
     && apt-get install -y --no-install-recommends tzdata curl \
@@ -23,7 +41,12 @@ RUN apt-get update \
     && rm -rf /var/lib/apt/lists/*
 
 COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+# 可选：pip 换国内源
+RUN if [ -n "$PIP_INDEX" ]; then \
+      pip install --no-cache-dir -i "$PIP_INDEX" -r requirements.txt; \
+    else \
+      pip install --no-cache-dir -r requirements.txt; \
+    fi
 
 COPY app ./app
 COPY web ./web

@@ -47,6 +47,11 @@ services:
     build:
       context: ./monitor
       dockerfile: Dockerfile
+      args:
+        APP_VERSION: ${APP_VERSION:-1.0.0}
+        # 构建期源加速（国内必开，见 .env.example / docs/deploy.md）
+        APT_MIRROR: ${APT_MIRROR:-}
+        PIP_INDEX: ${PIP_INDEX:-}
     container_name: music-monitor
     restart: unless-stopped
     ports:
