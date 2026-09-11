@@ -594,6 +594,21 @@ docker-compose 里两个服务在同一个 network，`ENGINE_URL` 必须是 `htt
 **Q：能多个人一起用吗？**
 可以，但要注意：曲目记录是全局的，两个监控抓同一首歌时后一个会被指纹去重跳过——这是刻意的设计。
 
+**Q：`docker login` 输了密码但屏幕上什么都不显示，是卡住了吗？**
+不是。Docker **不回显密码**——没有星号、光标也不动，这是正常的，粘进去直接回车即可。
+另外 Docker Hub 的密码栏**必须填 Access Token**，账号登录密码从 2024 年起已被禁用，填密码会报
+`unauthorized: incorrect username or password`。
+
+**Q：NAS 上 `docker login` 报 `error storing credentials`？**
+容器里没装凭据助手。编辑 `~/.docker/config.json`，把 `credsStore` 那一行**整行删掉**
+（之后凭据会以明文 base64 存在这个文件里，注意 `chmod 600`），或者装上 `gnome-keyring` /
+`pass` 之类的助手。删掉 `credsStore` 后重新 `docker login` 即可。
+
+**Q：登录信息要不要写进 `.env`？**
+**不要**。`.env` 是明文、会被备份、也容易误提交。`docker login` 会自动把凭据存到本地
+（Linux/NAS 是 `~/.docker/config.json`，Docker Desktop 是系统凭据管理器），
+之后 `docker push` / `docker pull` 直接读取，不需要再填第二次。想清除就 `docker logout`。
+
 ---
 
 ## 免责声明
