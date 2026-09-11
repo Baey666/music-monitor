@@ -14,14 +14,28 @@ go-music-dl 本身是一个「搜索 → 下载」的工具：你得先找到歌
 
 ## 目录结构
 
+仓库里的东西按用途分三类，互不混淆：
+
+| 类别 | 位置 |
+|---|---|
+| **项目内容**（源码 / 部署清单 / 运行时数据） | `monitor/`、`data/`、`docker-compose.yml`、`.env.example` |
+| **部署与发布**（文档 / 脚本） | `docs/`、`scripts/` |
+| **机器本地工具与登录态** | **不在本仓库内**（如 gh CLI 便携版放在 `Ai项目库\.gh\`） |
+
 ```
 music-monitor/
+├── README.md               # 本文件：项目总览
+├── LICENSE
 ├── docker-compose.yml      # 两个服务：引擎 + 监控
 ├── .env.example            # 端口 / 音质 / 并发 / 镜像仓库地址
+├── docs/                   # 文档（按用途一分为三）
+│   ├── deploy.md           #   → 部署到 NAS
+│   ├── publish-image.md    #   → 把镜像发到 Docker Hub / 云厂商
+│   └── publish-github.md   #   → 把代码发到 GitHub
 ├── scripts/                # 镜像构建与推送脚本
 │   ├── build-push.sh       #   Linux / macOS / NAS
 │   └── build-push.ps1      #   Windows PowerShell
-├── data/                   # 宿主机数据目录（引擎和下载产物都在这）
+├── data/                   # 运行时数据目录（内容不入库，只留占位）
 │   ├── downloads/          #   ← 下载下来的音乐
 │   └── monitor/            #   ← 监控自己的 SQLite（监控配置、曲目记录）
 └── monitor/                # 本项目新增的服务
@@ -137,281 +151,19 @@ docker compose logs -f monitor      # 看监控服务日志
 
 ---
 
-## 部署与发布（镜像怎么上传 / 怎么发到 NAS）
+## 部署与发布
 
-**先明确一点**：只有 `monitor` 这一个镜像需要你自己构建。
-引擎用的是官方镜像 `guohuiyuan/go-music-dl`，不需要你构建，也不需要你上传。
+三类内容分开放，各看各的文档：
 
-按你的场景选一种，从简单到复杂排列：
-
-### 方案 A：整目录拷到 NAS，在 NAS 上就地构建（最省事，推荐）
-
-不需要任何镜像仓库，不需要管 CPU 架构。
-
-```bash
-# 1. 把 music-monitor 整个文件夹拷到 NAS（SMB 共享 / scp / U 盘都行）
-#    Windows 直接拖进 NAS 共享目录即可
-
-# 2. 在 NAS 的 SSH 里执行
-cd /vol1/1000/docker/music-monitor          # 换成你的实际路径
-mkdir -p data/downloads data/monitor
-chmod -R 777 data
-docker compose up -d --build                # 关键：--build
-docker compose logs -f monitor
-```
-
-- 优点：NAS 自己编译出**本机架构**的镜像，不存在架构不匹配问题；改动配置后 `--build` 重跑即可。
-- 前置：NAS 能访问外网（拉 `python:3.12-slim` 基础镜像 + pip 装依赖）。
-  国内网络建议先给 Docker 配镜像加速器（见下方「国内网络注意事项」）。
-
-### 方案 B：构建镜像推到仓库，NAS 只拉镜像（多台机器 / 长期维护推荐）
-
-需要一个镜像仓库。国内用云厂商的通常最省心；Docker Hub 也能用，但要配镜像加速，见下面的专项说明。
-
-| 仓库 | 地址格式 |
+| 你想做什么 | 看哪个文档 |
 |---|---|
-| 阿里云 ACR | `registry.cn-hangzhou.aliyuncs.com/你的命名空间/music-monitor:latest` |
-| 腾讯云 TCR | `ccr.ccs.tencentyun.com/你的命名空间/music-monitor:latest` |
-| 华为云 SWR | `swr.cn-north-4.myhuaweicloud.com/你的命名空间/music-monitor:latest` |
-| Docker Hub | `你的DockerID/music-monitor:latest`（不带主机名） |
-| 私有 registry | `192.168.1.10:5000/music-monitor:latest` |
+| 把服务跑起来（部署到 NAS） | **[docs/deploy.md](docs/deploy.md)** |
+| 把镜像发到 Docker Hub / 云厂商 / 私有仓库 | **[docs/publish-image.md](docs/publish-image.md)** |
+| 把代码发到 GitHub | **[docs/publish-github.md](docs/publish-github.md)** |
 
-**第 1 步：在构建机上改 `.env`**
-
-```bash
-cp .env.example .env
-```
-把 `MONITOR_IMAGE` 改成你的仓库地址：
-```ini
-MONITOR_IMAGE=registry.cn-hangzhou.aliyuncs.com/yournamespace/music-monitor:latest
-```
-并确认 `PLATFORMS`（默认 `linux/amd64,linux/arm64`，两个架构都构建）。
-
-**第 2 步：登录仓库**
-
-```bash
-docker login registry.cn-hangzhou.aliyuncs.com
-```
-
-**第 3 步：构建并推送**
-
-```bash
-# Windows（在项目根目录）
-powershell -ExecutionPolicy Bypass -File scripts\build-push.ps1 push
-
-# Linux / macOS / NAS
-chmod +x scripts/build-push.sh
-./scripts/build-push.sh push
-```
-
-不想用脚本，等价的原始命令是：
-
-```bash
-docker buildx create --name monitor-builder --use       # 首次执行一次
-docker buildx build \
-  --platform linux/amd64,linux/arm64 \
-  --build-arg APP_VERSION=1.0.0 \
-  -t registry.cn-hangzhou.aliyuncs.com/yournamespace/music-monitor:latest \
-  --push -f monitor/Dockerfile monitor
-```
-
-**第 4 步：在 NAS 上部署**
-
-NAS 上只需要这两个文件（不用拷 `monitor/` 源码目录）：
-
-```
-你的部署目录/
-├── docker-compose.yml
-└── .env              # MONITOR_IMAGE 填同一个仓库地址
-```
-
-```bash
-docker login registry.cn-hangzhou.aliyuncs.com    # 私有仓库需要
-docker compose pull
-docker compose up -d
-```
-
-> compose 文件里 `image:` 和 `build:` 同时存在时：`up -d --build` 走本地构建，
-> `pull && up -d` 直接用远端镜像。想彻底禁止在 NAS 上构建，把 `monitor` 服务里的
-> `build:` 三行删掉即可（保留 `image:`）。
-
-#### 如果你用 Docker Hub 做仓库（专项说明）
-
-Docker Hub 的地址格式最短，但有两个坑：**登录不能再用密码**、**国内直连经常超时**。
-
-**1. 准备账号与 Access Token**
-
-- 注册/登录 https://hub.docker.com ，记下你的 **Docker ID**（不是邮箱，也不是昵称）。
-- 打开 https://hub.docker.com/settings/security → **New Access Token**，
-  描述随便填（如 `music-monitor-push`），权限选 **Read & Write**，
-  生成后**立刻复制**（只显示一次，关掉就再也看不到）。
-- 这个 Token 就是下面 `docker login` 要输入的密码。用网页登录密码会直接报错——
-  Docker 从 2024 年起已禁用密码登录。
-
-**2. 写出镜像地址**
-
-Docker Hub 的地址**不带主机名**，第一段就是你的 Docker ID 或组织名：
-
-```ini
-MONITOR_IMAGE=你的DockerID/music-monitor:latest
-```
-
-**3. 登录并推送**
-
-```bash
-# Linux / macOS / NAS
-./scripts/build-push.sh login      # 用户名填 Docker ID，密码填 Access Token
-./scripts/build-push.sh push
-
-# Windows（项目根目录）
-powershell -ExecutionPolicy Bypass -File scripts\build-push.ps1 login
-powershell -ExecutionPolicy Bypass -File scripts\build-push.ps1 push
-```
-
-不想用脚本，等价的原始命令：
-
-```bash
-docker login -u 你的DockerID                        # 密码填 Access Token
-docker buildx create --name monitor-builder --use   # 首次执行一次
-docker buildx build --platform linux/amd64,linux/arm64 \
-  --build-arg APP_VERSION=1.0.0 \
-  -t 你的DockerID/music-monitor:latest \
-  --push -f monitor/Dockerfile monitor
-```
-
-> **仓库是自动创建的**：第一次 `push` 成功时，Docker Hub 会自动建好
-> `你的DockerID/music-monitor` 这个仓库，默认 **public**。
-> 想改成 private，进仓库页 Settings → Visibility 切换
-> （免费账号总共只能有 **1 个** private，public 不限）。
-
-**4. 在 NAS 上拉取**
-
-```bash
-docker pull 你的DockerID/music-monitor:latest
-# 并让 NAS 上的 .env 里 MONITOR_IMAGE 填同一个地址
-docker compose pull && docker compose up -d
-```
-
-public 仓库不需要登录；private 仓库在 NAS 上也要先 `docker login`。
-
-**5. 免费额度与限流**
-
-| 项目 | 免费账号 |
-|---|---|
-| 私有仓库数量 | 1 个 |
-| 拉取限流（未登录） | 每 IP / 6 小时 100 次 |
-| 拉取限流（已登录） | 每账号 / 6 小时 200 次 |
-
-个人自用完全够。真撞到限流，就在 NAS 上 `docker login` 一次（按账号计额度，比按 IP 宽松），
-或者改用云厂商的免费个人版镜像服务。
-
-**6. 国内加速（拉取慢必看）**
-
-`push` 走上行一般没问题，但 **`pull` 经常超时**。在 NAS / 构建机的
-`/etc/docker/daemon.json` 里加加速地址：
-
-```json
-{
-  "registry-mirrors": ["https://<你的ID>.mirror.aliyuncs.com"]
-}
-```
-
-阿里云的个人专属加速地址在**容器镜像服务控制台 → 镜像工具 → 镜像加速器**里，免费。
-改完重启 Docker：
-
-```bash
-sudo systemctl restart docker
-# 群晖/威联通在「容器」套件设置里改，或 SSH 进来执行上一行
-```
-
-> 加速器只代理**拉取** `docker.io` 的公共镜像，不加速 `push`，也不代理 private 仓库。
-
-### 方案 C：NAS 完全不能上网 → 导出镜像文件离线导入
-
-```bash
-# 在能上网的机器上：构建 + 导出（脚本自带 save 子命令）
-./scripts/build-push.sh save            # 生成 music-monitor.tar
-
-# 引擎镜像也要一起导出，否则 NAS 上拉不到
-docker pull guohuiyuan/go-music-dl:latest
-docker save guohuiyuan/go-music-dl:latest -o go-music-dl.tar
-
-# 把两个 tar 和 docker-compose.yml / .env 拷到 NAS
-docker load -i go-music-dl.tar
-docker load -i music-monitor.tar
-docker compose up -d --no-build         # --no-build 确保只用导入的镜像
-```
-
-### 架构必须匹配（最常见的翻车点）
-
-镜像平台和 NAS CPU 架构不一致，启动时会报 `no matching manifest for linux/arm64` 之类的错。
-
-先在 NAS 上确认架构：
-
-```bash
-uname -m      # x86_64 → amd64 ；aarch64 / armv8 → arm64
-```
-
-- **方案 A** 不用管（在 NAS 上构建就是 NAS 的架构）。
-- **方案 B** 若构建机是 x86_64 而 NAS 是 arm64，必须多架构构建（脚本默认已带 `--platform linux/amd64,linux/arm64`）。
-  多架构需要 QEMU 模拟，第一次会提示安装：`docker run --privileged --rm tonistiigi/binfmt --install all`
-  （Docker Desktop 已内置，无需手动装）。
-- 只给自己一台机器用，直接把 `PLATFORMS` 改成单一架构，构建快很多：
-  ```ini
-  PLATFORMS=linux/amd64
-  ```
-
-验证推送上去的镜像有哪些架构：
-
-```bash
-docker manifest inspect registry.cn-hangzhou.aliyuncs.com/yournamespace/music-monitor:latest
-```
-
-### 国内网络注意事项
-
-拉取/推送慢或超时，给 Docker 守护进程配镜像加速（NAS 上编辑 `/etc/docker/daemon.json`）：
-
-```json
-{
-  "registry-mirrors": [
-    "https://docker.m.daocloud.io",
-    "https://dockerproxy.com",
-    "https://mirror.ccs.tencentyun.com"
-  ]
-}
-```
-改完 `systemctl restart docker`（飞牛 / 群晖在 Docker 应用设置里改）。
-
-pip 装依赖慢可以在 `monitor/Dockerfile` 的 `pip install` 前加一行换源：
-
-```dockerfile
-RUN pip config set global.index-url https://pypi.tuna.tsinghua.edu.cn/simple
-```
-
-### 安全提示
-
-镜像里**只有代码，不含任何音乐文件、Cookie、账号配置**——这些全在挂载出来的 `./data/` 里。
-所以：
-
-- 把镜像推到公开仓库是安全的；但**不要把 `data/` 目录提交到 Git 或打进镜像**（`.gitignore` 已排除，`monitor/.dockerignore` 也已排除）。
-- 如果打算公开分享镜像，请注意上游 go-music-dl 是 **AGPL-3.0**：本项目只通过 HTTP 调用它、没有链接其代码，
-  但再分发的合规性请自行确认。
-
-### 更新已部署的实例
-
-```bash
-# 方案 A（NAS 就地构建）
-git pull   # 或重新拷贝代码
-docker compose up -d --build
-
-# 方案 B（拉新镜像）
-docker compose pull && docker compose up -d
-
-# 只想重启监控服务（改完 .env 后）
-docker compose up -d monitor
-```
-
-升级前建议备份监控数据：`cp data/monitor/monitor.db ~/monitor-backup.db`
+**一句话版本**：只有 `monitor` 一个镜像需要你自己构建，引擎直接用官方镜像
+`guohuiyuan/go-music-dl`（不用构建、不用上传）。最省事的做法是把整个目录拷到 NAS 后执行
+`docker compose up -d --build` —— 不需要镜像仓库，也不会有 CPU 架构不匹配的问题。
 
 ---
 
@@ -594,20 +346,10 @@ docker-compose 里两个服务在同一个 network，`ENGINE_URL` 必须是 `htt
 **Q：能多个人一起用吗？**
 可以，但要注意：曲目记录是全局的，两个监控抓同一首歌时后一个会被指纹去重跳过——这是刻意的设计。
 
-**Q：`docker login` 输了密码但屏幕上什么都不显示，是卡住了吗？**
-不是。Docker **不回显密码**——没有星号、光标也不动，这是正常的，粘进去直接回车即可。
-另外 Docker Hub 的密码栏**必须填 Access Token**，账号登录密码从 2024 年起已被禁用，填密码会报
-`unauthorized: incorrect username or password`。
-
-**Q：NAS 上 `docker login` 报 `error storing credentials`？**
-容器里没装凭据助手。编辑 `~/.docker/config.json`，把 `credsStore` 那一行**整行删掉**
-（之后凭据会以明文 base64 存在这个文件里，注意 `chmod 600`），或者装上 `gnome-keyring` /
-`pass` 之类的助手。删掉 `credsStore` 后重新 `docker login` 即可。
-
-**Q：登录信息要不要写进 `.env`？**
-**不要**。`.env` 是明文、会被备份、也容易误提交。`docker login` 会自动把凭据存到本地
-（Linux/NAS 是 `~/.docker/config.json`，Docker Desktop 是系统凭据管理器），
-之后 `docker push` / `docker pull` 直接读取，不需要再填第二次。想清除就 `docker logout`。
+**Q：`docker login` 的相关问题（密码不回显 / 要填 Access Token / `error storing credentials`）？**
+镜像登录与推送的问题统一放在
+**[docs/publish-image.md 的常见问题](docs/publish-image.md#7-常见问题)**。
+`git push` 的问题放在 **[docs/publish-github.md 的常见问题](docs/publish-github.md#6-常见问题)**。
 
 ---
 
