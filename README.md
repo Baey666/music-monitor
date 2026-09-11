@@ -32,8 +32,9 @@ music-monitor/
 │   ├── deploy.md           #   → 部署到 NAS
 │   ├── publish-image.md    #   → 把镜像发到 Docker Hub / 云厂商
 │   └── publish-github.md   #   → 把代码发到 GitHub
-├── scripts/                # 镜像构建与推送脚本
-│   ├── build-push.sh       #   Linux / macOS / NAS
+├── scripts/                # 部署、构建与推送脚本
+│   ├── deploy-nas.sh       #   ★ NAS 上一键部署（拉现成镜像，幂等可重复跑）
+│   ├── build-push.sh       #   Linux / macOS / NAS 构建并推送镜像
 │   └── build-push.ps1      #   Windows PowerShell
 ├── data/                   # 运行时数据目录（内容不入库，只留占位）
 │   ├── downloads/          #   ← 下载下来的音乐

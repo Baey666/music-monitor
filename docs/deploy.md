@@ -52,7 +52,18 @@ docker compose logs -f monitor
 
 完整步骤（含 Docker Hub 专项、云厂商地址、限流与加速）见 **[publish-image.md](publish-image.md)**。
 
-NAS 侧最终只需要这两个文件，不用拷 `monitor/` 源码目录：
+> **一键脚本**（推荐，幂等，可重复执行）：本仓库已推送到 Docker Hub 的镜像地址是
+> `baey666/music-monitor:latest`。在 NAS 上 `git clone` 本仓库后直接执行：
+>
+> ```bash
+> ./scripts/deploy-nas.sh                          # 用默认镜像地址
+> ./scripts/deploy-nas.sh 你的ID/music-monitor:v1   # 或指定镜像
+> ```
+>
+> 脚本会依次完成：生成/复用 `.env` → 写入 `MONITOR_IMAGE` → 建数据目录并放开权限 →
+> `docker compose pull` → `up -d` → 打印访问地址。**拉取失败时会直接打印国内加速器配置方法。**
+
+下面是手工步骤。NAS 侧最终只需要这两个文件，不用拷 `monitor/` 源码目录：
 
 ```
 你的部署目录/
