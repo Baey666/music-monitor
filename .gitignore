@@ -1,0 +1,26 @@
+.env
+data/*
+!data/downloads/
+!data/monitor/
+data/downloads/*
+data/monitor/*
+!data/downloads/.gitkeep
+!data/monitor/.gitkeep
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+.DS_Store
+Thumbs.db
+*.log
+
+# 构建/发布产生的中间产物
+*.tar
+.mmtmp/
+
+# 本地工具与凭证（便携版 gh CLI 及其登录态）——绝不入库
+.tools/
+.local/
+.cache/
+.config/

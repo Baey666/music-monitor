@@ -1,0 +1,73 @@
+# ============================================================================
+#  music-monitor —— 在 go-music-dl 之上增加「榜单 / 歌单 / 收藏夹 监控自动下载」
+#
+#  两个服务：
+#    music-dl  上游下载引擎（官方镜像，负责搜索、解析、按 Cookie 音质下载、去重、写盘）
+#    monitor   本项目新增的监控编排服务（榜单抓取、增量比对、音质择优、定时调度、Web 控制台）
+#
+#  ── 三种用法 ───────────────────────────────────────────────────────────────
+#  1) 本地构建启动（最简单）： docker compose up -d --build
+#  2) 推送到镜像仓库后部署：  docker compose pull && docker compose up -d
+#     先在 .env 里把 MONITOR_IMAGE 改成你的仓库地址，并执行 scripts/build-push 脚本。
+#  3) 离线镜像包部署：        docker load -i music-monitor.tar 然后 up -d
+#
+#  启动后浏览器打开 monitor（默认 http://<NAS-IP>:9090）
+# ============================================================================
+
+services:
+  # --------------------------------------------------------------------------
+  # 上游引擎：guohuiyuan/go-music-dl
+  # 不要删除这个服务，monitor 的所有搜索/下载动作都通过它的 HTTP 接口完成。
+  # --------------------------------------------------------------------------
+  music-dl:
+    image: guohuiyuan/go-music-dl:latest
+    container_name: go-music-dl
+    restart: unless-stopped
+    ports:
+      # 左边是宿主机端口，被占用时改左边即可
+      - "${ENGINE_PORT:-8085}:8080"
+    volumes:
+      # 引擎的数据目录：下载文件、Cookie、设置、SQLite 都在这里
+      - ./data:/home/appuser/data
+    environment:
+      - TZ=${TZ:-Asia/Shanghai}
+    # 官方镜像以 uid=1000 运行，宿主机 data 目录需要可写（见 README 的初始化步骤）
+    user: "1000:1000"
+
+  # --------------------------------------------------------------------------
+  # 监控服务：本项目新增功能
+  #
+  # image 与 build 同时存在时的行为：
+  #   docker compose up -d --build   → 本地构建（忽略远端）
+  #   docker compose pull && up -d   → 直接用远端镜像，不在本地构建
+  #   直接 docker compose up -d      → 本地有镜像就用本地，没有才去拉/构建
+  # --------------------------------------------------------------------------
+  monitor:
+    image: ${MONITOR_IMAGE:-music-monitor:latest}
+    build:
+      context: ./monitor
+      dockerfile: Dockerfile
+    container_name: music-monitor
+    restart: unless-stopped
+    ports:
+      - "${MONITOR_PORT:-9090}:9090"
+    volumes:
+      # 监控自身的数据（SQLite 配置库），与引擎数据分开，避免互相干扰
+      - ./data/monitor:/app/data
+    environment:
+      # 引擎地址（容器内网络，无需改动）
+      - ENGINE_URL=http://music-dl:8080
+      # 引擎路由前缀，官方默认 /music，如改了 --base-path 需同步修改
+      - ENGINE_PREFIX=${ENGINE_PREFIX:-/music}
+      # 调度器心跳间隔（秒），决定「最快多久发现一次新歌」
+      - TICK_SECONDS=${TICK_SECONDS:-60}
+      # 单次运行内并发下载数（引擎侧也有并发限制，别调太大）
+      - DOWNLOAD_CONCURRENCY=${DOWNLOAD_CONCURRENCY:-3}
+      # 界面默认音质
+      - DEFAULT_QUALITY=${DEFAULT_QUALITY:-lossless}
+      - TZ=${TZ:-Asia/Shanghai}
+    depends_on:
+      - music-dl
+    # 与引擎使用同一 uid，保证挂载目录权限一致
+    user: "1000:1000"
+

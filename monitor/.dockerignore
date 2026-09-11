@@ -1,0 +1,13 @@
+# 构建上下文只保留运行所需内容，减小传输体积
+tests/
+__pycache__/
+**/__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+*.db
+*.db-wal
+*.db-shm
+*.log
+.DS_Store

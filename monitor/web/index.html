@@ -1,0 +1,293 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>music-monitor · 榜单歌单监控自动下载</title>
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+
+<header class="topbar">
+  <div class="brand">music-monitor<small>在 go-music-dl 之上做榜单 / 歌单 / 收藏夹监控</small></div>
+  <div class="spacer"></div>
+  <span class="pill" id="engine-pill"><span class="dot"></span><span id="engine-text">检测中…</span></span>
+  <span class="pill" id="sched-pill"><span class="dot"></span><span id="sched-text">—</span></span>
+  <button class="btn small" onclick="App.refreshAll()">刷新</button>
+</header>
+
+<nav class="tabs">
+  <button data-tab="monitors" class="active">监控任务</button>
+  <button data-tab="charts">热门榜单</button>
+  <button data-tab="playlists">歌单 / 收藏夹</button>
+  <button data-tab="records">下载记录</button>
+  <button data-tab="settings">设置</button>
+</nav>
+
+<main>
+
+  <!-- ============================ 监控任务 ============================ -->
+  <section class="page active" id="page-monitors">
+    <div class="toolbar">
+      <button class="btn primary" onclick="App.openMonitorModal()">+ 新建监控</button>
+      <button class="btn" onclick="App.loadMonitors()">刷新列表</button>
+      <span class="muted small" id="monitor-summary"></span>
+    </div>
+    <div class="grid cols-2" id="monitor-list"></div>
+    <div class="empty" id="monitor-empty" style="display:none">
+      还没有监控任务。可以从「热门榜单」或「歌单 / 收藏夹」页面一键创建，也可以点「新建监控」手动配置。
+    </div>
+  </section>
+
+  <!-- ============================ 热门榜单 ============================ -->
+  <section class="page" id="page-charts">
+    <div class="notice info">
+      榜单通过引擎的「歌单解析」能力获取：网易云四大榜是官方歌单 ID（成功率高），
+      QQ / 酷狗等用榜单页链接交给引擎识别（可能随平台改版失效）。任意条目失效都可以用「校验」自检，
+      也可以直接在下面新增自定义榜单。
+    </div>
+
+    <div class="card">
+      <h3>平台与榜单</h3>
+      <div class="chips" id="chart-platforms"></div>
+      <div class="toolbar">
+        <button class="btn small" onclick="App.verifyCharts(App.currentChartKeys())">校验当前平台榜单</button>
+        <button class="btn small" onclick="App.verifyCharts(null)">校验全部</button>
+        <span class="muted small" id="chart-verify-status"></span>
+      </div>
+      <div class="grid cols-3" id="chart-list"></div>
+    </div>
+
+    <div class="card">
+      <h3>自定义榜单（用歌单链接）</h3>
+      <p class="hint">任何平台只要引擎支持歌单解析，粘一个该榜单对应的歌单链接即可。例如网易云榜单页复制链接、Apple Music 榜单 Playlist 分享链接等。</p>
+      <div class="row">
+        <input type="text" id="custom-chart-name" placeholder="榜单名称，如：我的欧美新歌" style="max-width:240px">
+        <input type="text" id="custom-chart-link" placeholder="歌单 / 榜单链接" style="flex:1;min-width:260px">
+        <button class="btn" onclick="App.resolveCustomChart()">解析</button>
+      </div>
+      <div id="custom-chart-result" class="small muted" style="margin-top:10px"></div>
+    </div>
+
+    <div class="card" id="chart-preview-card" style="display:none">
+      <div class="row">
+        <h3 id="chart-preview-title" style="margin:0"></h3>
+        <div class="spacer"></div>
+        <button class="btn primary small" id="chart-preview-create">用这些平台创建监控</button>
+        <button class="btn small" onclick="document.getElementById('chart-preview-card').style.display='none'">关闭</button>
+      </div>
+      <p class="hint" id="chart-preview-meta"></p>
+      <div class="table-wrap"><table><thead><tr><th>#</th><th>歌名</th><th>歌手</th><th>专辑</th><th>来源</th></tr></thead><tbody id="chart-preview-body"></tbody></table></div>
+    </div>
+  </section>
+
+  <!-- ============================ 歌单 / 收藏夹 ============================ -->
+  <section class="page" id="page-playlists">
+    <div class="card">
+      <h2>监控指定歌单（链接）</h2>
+      <p class="hint">粘贴任意平台歌单链接，引擎会自动识别来源。解析成功后可以预览曲目并直接创建监控。</p>
+      <div class="row">
+        <input type="text" id="playlist-link" placeholder="https://music.163.com/#/playlist?id=..." style="flex:1;min-width:280px">
+        <button class="btn primary" onclick="App.resolvePlaylist()">解析歌单</button>
+      </div>
+      <div id="playlist-result" class="small" style="margin-top:10px"></div>
+    </div>
+
+    <div class="card">
+      <h2>监控个人收藏夹 / 我喜欢的音乐</h2>
+      <p class="hint">
+        读取你在各平台账号下的歌单与收藏夹（需要先在 go-music-dl 的「设置」里扫码登录或粘贴 Cookie）。
+        勾选要持续跟踪的歌单即可创建监控。
+      </p>
+      <div class="chips" id="fav-platforms"></div>
+      <div class="toolbar">
+        <button class="btn primary small" onclick="App.loadFavorites()">读取我的收藏</button>
+        <button class="btn small" onclick="App.createFavoritesMonitor()">用勾选项创建监控</button>
+        <span class="muted small" id="fav-status"></span>
+      </div>
+      <div id="fav-list"></div>
+    </div>
+  </section>
+
+  <!-- ============================ 下载记录 ============================ -->
+  <section class="page" id="page-records">
+    <div class="card">
+      <h2>执行历史</h2>
+      <div class="table-wrap"><table>
+        <thead><tr><th>时间</th><th>监控</th><th>状态</th><th>发现</th><th>新增</th><th>下载</th><th>跳过</th><th>失败</th><th>说明</th><th></th></tr></thead>
+        <tbody id="run-body"></tbody>
+      </table></div>
+    </div>
+
+    <div class="card">
+      <h2>曲目明细</h2>
+      <div class="toolbar">
+        <select id="track-monitor" class="small" style="max-width:220px"></select>
+        <select id="track-status" class="small" style="max-width:140px">
+          <option value="">全部状态</option>
+          <option value="downloaded">已下载</option>
+          <option value="pending">待下载</option>
+          <option value="failed">失败</option>
+          <option value="missing">未达音质</option>
+          <option value="skipped">已跳过</option>
+        </select>
+        <button class="btn small" onclick="App.loadTracks()">筛选</button>
+        <button class="btn small" onclick="App.retryFailed()">重试全部失败</button>
+        <span class="muted small" id="track-summary"></span>
+      </div>
+      <div class="table-wrap"><table>
+        <thead><tr><th>歌名</th><th>歌手</th><th>来源</th><th>状态</th><th>实际音质</th><th>文件</th><th>说明</th><th></th></tr></thead>
+        <tbody id="track-body"></tbody>
+      </table></div>
+    </div>
+
+    <div class="card" id="run-log-card" style="display:none">
+      <div class="row"><h3 style="margin:0" id="run-log-title">运行日志</h3><div class="spacer"></div>
+        <button class="btn small" onclick="document.getElementById('run-log-card').style.display='none'">关闭</button></div>
+      <pre class="log" id="run-log"></pre>
+    </div>
+  </section>
+
+  <!-- ============================ 设置 ============================ -->
+  <section class="page" id="page-settings">
+    <div class="card">
+      <h2>音质说明（重要）</h2>
+      <div class="notice">
+        go-music-dl 的下载接口没有「音质」参数，实际音质由<b>该平台账号的会员等级（Cookie）</b>决定。
+        本服务做的是：探测每首歌的真实码率 → 不达标就在其它平台找同曲目 → 在达标候选里挑最好的。
+        所以想要 FLAC 无损，必须先在 go-music-dl 里配置对应平台的会员 Cookie（网易云 / QQ / 酷狗支持扫码登录）。
+      </div>
+      <div class="grid cols-3" id="quality-help"></div>
+    </div>
+
+    <div class="card">
+      <h2>引擎连接</h2>
+      <div class="kv" id="engine-info"></div>
+      <div class="toolbar">
+        <button class="btn small" onclick="App.checkEngine()">重新检测</button>
+      </div>
+      <p class="hint">
+        引擎的搜索与下载接口本身是公开的，无需登录。只有「由本服务代写平台 Cookie / 修改引擎设置」才需要登录引擎管理员账号。
+      </p>
+      <div class="row">
+        <input type="text" id="engine-username" placeholder="引擎管理员账号" style="max-width:220px">
+        <input type="password" id="engine-password" placeholder="引擎管理员密码" style="max-width:220px">
+        <button class="btn" onclick="App.engineLogin()">登录引擎</button>
+        <button class="btn small" onclick="App.engineCookies()">查看已配置 Cookie</button>
+      </div>
+      <div id="engine-login-result" class="small muted" style="margin-top:10px"></div>
+    </div>
+
+    <div class="card">
+      <h2>代写平台 Cookie</h2>
+      <p class="hint">
+        需要先登录引擎。格式为 JSON，键是平台名（netease / qq / kugou …），值是 Cookie 字符串。
+        写好后会立刻影响之后所有下载的音质。也可以直接去引擎自己的设置页粘贴。
+      </p>
+      <textarea id="cookie-json" placeholder='{"netease":"MUSIC_U=...","qq":"uin=...; qm_keyst=..."}'></textarea>
+      <div class="toolbar"><button class="btn" onclick="App.pushCookies()">写入引擎</button></div>
+    </div>
+
+    <div class="card">
+      <h2>引擎当前设置</h2>
+      <p class="hint">重点确认「本地下载目录」是 data/downloads，这样下载产物会落在宿主机 ./data/downloads。</p>
+      <div class="table-wrap"><table><thead><tr><th>配置项</th><th>值</th></tr></thead><tbody id="engine-settings-body"></tbody></table></div>
+    </div>
+
+    <div class="card">
+      <h2>默认参数</h2>
+      <div class="grid cols-2">
+        <label class="field"><span>默认音质</span><select id="s-quality"></select></label>
+        <label class="field"><span>默认检查间隔（分钟）</span><input type="number" id="s-interval" min="10"></label>
+        <label class="field"><span>单次最多下载（首）</span><input type="number" id="s-max" min="1"></label>
+        <label class="field"><span>下载时内嵌封面/歌词</span><select id="s-embed"><option value="1">开启</option><option value="0">关闭</option></select></label>
+      </div>
+      <div class="row"><button class="btn primary" onclick="App.saveSettings()">保存默认参数</button></div>
+    </div>
+
+    <div class="card">
+      <h2>没有达标的源怎么办</h2>
+      <p class="hint">当目标音质在允许的平台里都拿不到时，每个监控可以选两种策略：</p>
+      <div class="grid cols-2">
+        <div><b>best_effort（推荐）</b><p class="muted small">取所有候选里码率最高的那个，音质降级但歌不会丢。界面上会标出实际拿到的音质。</p></div>
+        <div><b>skip</b><p class="muted small">严格模式：拿不到目标音质就不下载，记录为「未达音质」，后续可以升级 Cookie 后重试。</p></div>
+      </div>
+    </div>
+  </section>
+</main>
+
+<!-- ============================ 监控编辑弹窗 ============================ -->
+<div class="modal-backdrop" id="monitor-modal">
+  <div class="modal">
+    <h2 id="monitor-modal-title">新建监控</h2>
+
+    <div class="grid cols-2">
+      <label class="field"><span>监控名称</span><input type="text" id="m-name" placeholder="如：网易云热歌榜"></label>
+      <label class="field"><span>监控类型</span>
+        <select id="m-kind" onchange="App.onKindChange()">
+          <option value="chart">热门榜单</option>
+          <option value="playlist">指定歌单（链接）</option>
+          <option value="favorites">个人收藏夹</option>
+        </select>
+      </label>
+    </div>
+
+    <!-- chart -->
+    <div id="m-block-chart">
+      <label class="field"><span>选择榜单（可多选，留空表示用「自定义榜单链接」）</span></label>
+      <div id="m-chart-picker" style="max-height:260px;overflow:auto;border:1px solid var(--border);border-radius:10px;padding:10px"></div>
+      <label class="field" style="margin-top:10px"><span>自定义榜单链接（每行一个，格式：名称|链接 或只写链接）</span>
+        <textarea id="m-chart-links" placeholder="我的欧美新歌|https://music.163.com/#/playlist?id=123456"></textarea></label>
+    </div>
+
+    <!-- playlist -->
+    <div id="m-block-playlist" style="display:none">
+      <label class="field"><span>歌单链接（每行一个，格式：名称|链接 或只写链接）</span>
+        <textarea id="m-playlist-links" placeholder="我的通勤歌单|https://music.163.com/#/playlist?id=123456"></textarea></label>
+    </div>
+
+    <!-- favorites -->
+    <div id="m-block-favorites" style="display:none">
+      <label class="field"><span>要监控的个人歌单（留空 = 该平台下全部歌单/收藏夹）</span></label>
+      <div id="m-fav-picker" class="muted small">先到「歌单 / 收藏夹」页面点「读取我的收藏」，这里会出现可勾选项。</div>
+    </div>
+
+    <label class="field"><span>参与平台（用于跨平台补源，勾选越多越容易拿到高音质）</span></label>
+    <div class="chips" id="m-sources"></div>
+
+    <div class="grid cols-2" style="margin-top:12px">
+      <label class="field"><span>目标音质</span><select id="m-quality"></select></label>
+      <label class="field"><span>拿不到目标音质时</span>
+        <select id="m-fallback">
+          <option value="best_effort">取最高可用（推荐）</option>
+          <option value="skip">跳过并记录</option>
+        </select>
+      </label>
+      <label class="field"><span>检查间隔（分钟）</span><input type="number" id="m-interval" min="10" value="360"></label>
+      <label class="field"><span>单次最多下载（首）</span><input type="number" id="m-max" min="1" value="30"></label>
+      <label class="field"><span>包含关键词（逗号分隔，留空不限）</span><input type="text" id="m-include" placeholder="如：周杰伦,林俊杰"></label>
+      <label class="field"><span>排除关键词</span><input type="text" id="m-exclude" placeholder="如：伴奏,DJ版,翻唱"></label>
+    </div>
+
+    <div class="row">
+      <label class="chip" id="m-enabled-chip"><input type="checkbox" id="m-enabled" checked><span>创建后立即启用</span></label>
+      <label class="chip on" id="m-auto-chip"><input type="checkbox" id="m-auto" checked><span>自动下载（关闭则只记录）</span></label>
+      <label class="chip on" id="m-embed-chip"><input type="checkbox" id="m-embed" checked><span>内嵌封面/歌词</span></label>
+    </div>
+
+    <div id="m-preview" class="small" style="margin-top:12px"></div>
+
+    <div class="modal-actions">
+      <button class="btn" onclick="App.previewDraft()">干跑预览</button>
+      <div class="spacer"></div>
+      <button class="btn" onclick="App.closeModal()">取消</button>
+      <button class="btn primary" id="m-save" onclick="App.saveMonitor()">保存</button>
+    </div>
+  </div>
+</div>
+
+<div id="toast" class="pill" style="display:none;position:fixed;bottom:22px;right:22px;z-index:99;padding:10px 16px;background:var(--panel);border-color:var(--accent);color:var(--text)"></div>
+
+<script src="/static/app.js"></script>
+</body>
+</html>
