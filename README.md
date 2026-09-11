@@ -25,13 +25,15 @@ go-music-dl 本身是一个「搜索 → 下载」的工具：你得先找到歌
 ```
 music-monitor/
 ├── README.md               # 本文件：项目总览
+├── CHANGELOG.md            # 更新日志（每次发版在这里记一笔）
 ├── LICENSE
 ├── docker-compose.yml      # 两个服务：引擎 + 监控
-├── .env.example            # 端口 / 音质 / 并发 / 镜像地址 / 落盘路径
+├── .env.example            # 端口 / 音质 / 并发 / 版本号 / 落盘路径
 ├── docs/                   # 文档
 │   └── deploy.md           #   → 部署到 NAS（三种方案怎么选）
 ├── scripts/                # 脚本
-│   └── deploy-nas.sh       #   ★ NAS 上一键部署（拉现成镜像，幂等可重复跑）
+│   ├── deploy-nas.sh       #   ★ NAS 上一键部署（拉现成镜像，幂等可重复跑）
+│   └── version.sh          #   ★ 版本管理（show / check / sync / bump）
 ├── config/                 # ★ 所有配置与设置（内容不入库，只留占位）
 │   ├── engine/             #   ← 引擎设置 settings.db + 登录态 cookies.json
 │   └── monitor/            #   ← 监控自己的 SQLite（监控配置、曲目记录）
@@ -234,11 +236,15 @@ docker compose logs -f monitor      # 看监控服务日志
 本仓库只放**项目本身**。把服务跑起来，看 **[docs/deploy.md](docs/deploy.md)** 就够
 （三种方案怎么选、国内网络注意事项、权限与备份都在里面）。
 
-**一句话版本**：镜像已经发布在 Docker Hub（`baey666/music-monitor:latest`），
-NAS 上 `git clone` 本仓库后执行 `./scripts/deploy-nas.sh` 即可；
-不想用脚本就 `docker compose pull && docker compose up -d`。
+**一句话版本**：镜像已发布在 Docker Hub，按版本号拉取（当前 `baey666/music-monitor:v1.0.0`，
+另有 `latest` 跟随最新发布）。NAS 上 `git clone` 本仓库后执行 `./scripts/deploy-nas.sh` 即可；
+不想用脚本就 `docker compose pull && docker compose up -d`（`.env` 里的 `APP_VERSION` 决定拉哪个版本）。
 引擎用官方镜像 `guohuiyuan/go-music-dl`，不需要构建。
 如果你自己改了代码，`docker compose up -d --build` 会在本机重新构建。
+
+> **关于版本号**：本项目遵循[语义化版本](https://semver.org/lang/zh-CN/)，版本号唯一来源是
+> `monitor/app/__init__.py` 的 `__version__`。改版本用 `./scripts/version.sh bump <patch|minor|major>`，
+> 它会同步所有文件、写 CHANGELOG、打 git tag。详见下方[版本管理](#版本管理)。
 
 > **给原作者**：构建并推送镜像、把代码发 GitHub 这类**发布流程**资料不在本仓库里
 > （放在项目外的 `music-monitor-deploy/`），避免和项目内容混在一起。
@@ -337,6 +343,52 @@ NAS 上 `git clone` 本仓库后执行 `./scripts/deploy-nas.sh` 即可；
 
 ---
 
+## 版本管理
+
+本项目遵循[语义化版本](https://semver.org/lang/zh-CN/)。版本号有**一个唯一来源**和**一条发布命令**，
+不再手改四处文件、也不再出现「不知道跑的是哪个版本」的问题。
+
+### 版本号从哪来、到哪去
+
+| 角色 | 位置 | 说明 |
+|---|---|---|
+| **唯一来源** | `monitor/app/__init__.py` → `__version__` | 代码里读的就是它 |
+| Dockerfile | `ARG APP_VERSION` | 构建时注入，写进 OCI 元数据 |
+| `.env` | `APP_VERSION=x.y.z` | 决定拉哪个版本的镜像 |
+| docker-compose.yml | `image: …:v${APP_VERSION}` | 镜像 tag 由它派生，改一处全跟上 |
+| CHANGELOG.md | `## [x.y.z]` | 每个版本记了什么 |
+| git tag | `v1.0.0` | 触发自动构建 |
+
+### 怎么发新版本
+
+```bash
+# 1. 改代码，把变更写进 CHANGELOG.md 的 [Unreleased] 小节
+
+# 2. 递增版本号（patch 修 bug / minor 加功能 / major 不兼容变更）
+./scripts/version.sh bump patch          # 改文件 + commit + 打 tag，不自动 push
+./scripts/version.sh bump minor --push   # 同上，完成后直接 push（触发自动构建）
+
+# 3.（可选）校验各处版本号是否一致
+./scripts/version.sh check
+
+# 4.（可选）只看当前版本
+./scripts/version.sh
+```
+
+`bump` 执行后会自动：改 `__version__` → 同步 Dockerfile / .env → 写 CHANGELOG → `git commit` → `git tag`。
+`--push` 会连提交带 tag 一起推，GitHub Actions 收到 `v*` tag 后自动构建 amd64/arm64 镜像并推到 Docker Hub。
+
+### 镜像 tag 规则
+
+| tag | 含义 |
+|---|---|
+| `baey666/music-monitor:v1.0.0` | 精确版本，可回滚 |
+| `baey666/music-monitor:latest` | 最新发布，方便拉取 |
+
+想固定用某个版本，在 `.env` 里设 `APP_VERSION=1.0.0` 即可；想回滚就改成旧版本号再 `pull`。
+
+---
+
 ## 常用操作
 
 ```bash
@@ -357,6 +409,12 @@ cp config/monitor/monitor.db ~/monitor-backup.db
 
 # 改了代码后重新构建并启动
 docker compose up -d --build monitor
+
+# 发新版本（改版本号 + commit + tag，--push 触发自动构建）
+./scripts/version.sh bump patch --push
+
+# 查看正在跑的版本（容器内）
+curl -s http://localhost:9090/api/health | grep version
 ```
 
 配置与数据说明：

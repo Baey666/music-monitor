@@ -55,15 +55,15 @@ docker compose build && docker compose up -d
 完整步骤（Docker Hub 专项、云厂商地址、限流与加速）属于**发布流程**，不在本仓库内。
 普通使用者不需要它 —— 镜像已经发布好，直接拉取即可。
 
-> **一键脚本**（推荐，幂等，可重复执行）：本仓库已推送到 Docker Hub 的镜像地址是
-> `baey666/music-monitor:latest`。在 NAS 上 `git clone` 本仓库后直接执行：
+> **一键脚本**（推荐，幂等，可重复执行）：本仓库已推送到 Docker Hub，按版本号拉取
+> （当前 `baey666/music-monitor:v1.0.0`，另有 `latest` 跟随最新发布）。在 NAS 上 `git clone` 本仓库后直接执行：
 >
 > ```bash
-> ./scripts/deploy-nas.sh                          # 用默认镜像地址
-> ./scripts/deploy-nas.sh 你的ID/music-monitor:v1   # 或指定镜像
+> ./scripts/deploy-nas.sh                          # 按 .env 的 APP_VERSION 拉 v<版本号>
+> ./scripts/deploy-nas.sh 你的ID/music-monitor:v1.0.1   # 或指定镜像
 > ```
 >
-> 脚本会依次完成：生成/复用 `.env` → 写入 `MONITOR_IMAGE` → 建数据目录并放开权限 →
+> 脚本会依次完成：生成/复用 `.env` → 按 `APP_VERSION` 派生镜像 tag → 建数据目录并放开权限 →
 > `docker compose pull` → `up -d` → 打印访问地址。**拉取失败时会直接打印国内加速器配置方法。**
 
 下面是手工步骤。NAS 侧最终只需要这两个文件，不用拷 `monitor/` 源码目录：
@@ -71,7 +71,7 @@ docker compose build && docker compose up -d
 ```
 你的部署目录/
 ├── docker-compose.yml
-└── .env              # MONITOR_IMAGE 填镜像仓库地址
+└── .env              # APP_VERSION 填版本号，镜像 tag 由它派生
 ```
 
 ```bash
@@ -89,8 +89,8 @@ docker compose up -d
 
 | 场景 | 拉取时填的地址 |
 |---|---|
-| 镜像在 Docker Hub，且 NAS 已配好加速器 | `你的DockerID/music-monitor:latest` |
-| 直连 Docker Hub 超时（国内常见） | `docker.1ms.run/你的DockerID/music-monitor:latest` |
+| 镜像在 Docker Hub，且 NAS 已配好加速器 | `你的DockerID/music-monitor:v1.0.0` |
+| 直连 Docker Hub 超时（国内常见） | `docker.1ms.run/你的DockerID/music-monitor:v1.0.0` |
 
 关于加速器，实测结论（2026-09 本机与 NAS 双端验证）：
 
@@ -112,8 +112,8 @@ docker compose up -d
 
 ```bash
 # 1) 在能上网的机器上：把两个镜像都拉下来再导出
-docker pull baey666/music-monitor:latest
-docker save baey666/music-monitor:latest -o music-monitor.tar
+docker pull baey666/music-monitor:v1.0.0
+docker save baey666/music-monitor:v1.0.0 -o music-monitor.tar
 
 # 引擎镜像也要一起导出，否则 NAS 上拉不到
 docker pull guohuiyuan/go-music-dl:latest
@@ -154,7 +154,7 @@ uname -m      # x86_64 → amd64 ；aarch64 / armv8 → arm64
 验证推送上去的镜像里有哪些架构：
 
 ```bash
-docker manifest inspect 你的仓库地址/music-monitor:latest
+docker manifest inspect 你的仓库地址/music-monitor:v1.0.0
 ```
 
 ---

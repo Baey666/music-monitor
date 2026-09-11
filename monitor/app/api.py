@@ -7,7 +7,7 @@ from typing import Any
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
-from . import charts, pipeline, quality
+from . import __version__, charts, pipeline, quality
 from .config import settings
 from .engine import EngineError
 from .runtime import db, engine, scheduler
@@ -74,6 +74,7 @@ class RetryIn(BaseModel):
 async def health() -> dict[str, Any]:
     eng = await engine.healthz()
     return {
+        "version": __version__,
         "engine": {"url": engine.base + engine.prefix, **eng},
         "scheduler": scheduler.status(),
         "tracks": db.track_stats(),

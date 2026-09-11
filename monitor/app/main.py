@@ -12,6 +12,7 @@ from fastapi import FastAPI
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
+from . import __version__
 from .api import router
 from .runtime import db, engine, scheduler, seed_defaults
 
@@ -49,7 +50,7 @@ async def lifespan(app: FastAPI):
         await engine.aclose()
 
 
-app = FastAPI(title="music-monitor", version="1.0.0", lifespan=lifespan)
+app = FastAPI(title="music-monitor", version=__version__, lifespan=lifespan)
 app.include_router(router)
 
 

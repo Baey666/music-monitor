@@ -58,7 +58,9 @@ services:
   #   直接 docker compose up -d      → 本地有镜像就用本地，没有才去拉/构建
   # --------------------------------------------------------------------------
   monitor:
-    image: ${MONITOR_IMAGE:-baey666/music-monitor:latest}
+    # 镜像 tag 跟随 .env 里的 APP_VERSION 派生：默认拉 baey666/music-monitor:v<版本号>。
+    #   想固定用 latest，或换别的 registry，就在 .env 里写 MONITOR_IMAGE 覆盖（见 .env.example）。
+    image: ${MONITOR_IMAGE:-baey666/music-monitor:v${APP_VERSION:-1.0.0}}
     build:
       context: ./monitor
       dockerfile: Dockerfile

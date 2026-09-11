@@ -6,19 +6,19 @@
 #        NAS 只需拉取运行，**不在本地构建**。也就是 docs/deploy.md 的「方案 B」。
 #
 #  用法：
-#     ./scripts/deploy-nas.sh                        # 用默认镜像地址
-#     ./scripts/deploy-nas.sh myid/music-monitor:v1  # 指定镜像地址
-#     MONITOR_IMAGE=xxx docker compose ...           # 也可直接改 .env
+#     ./scripts/deploy-nas.sh                                 # 按 .env 的 APP_VERSION 拉 v<版本号>
+#     ./scripts/deploy-nas.sh baey666/music-monitor:v1.0.1    # 指定镜像地址
+#     MONITOR_IMAGE=xxx docker compose ...                    # 也可直接改 .env
 #
 #  脚本是幂等的：重复执行只会重新拉取并重启容器，不会丢数据。
 # ============================================================================
 set -euo pipefail
 
-# 默认镜像地址：本项目实际推送到 Docker Hub 的地址
-DEFAULT_IMAGE="baey666/music-monitor:latest"
+# 镜像仓库地址（不含 tag）。tag 由 .env 里的 APP_VERSION 派生，见下面第 2 步。
+DEFAULT_REPO="baey666/music-monitor"
 
-# 允许用第一个参数覆盖镜像地址
-IMAGE="${1:-$DEFAULT_IMAGE}"
+# 可选：第一个参数直接指定完整镜像地址；不传则自动用 <DEFAULT_REPO>:v<APP_VERSION>。
+ARG_IMAGE="${1:-}"
 
 info()  { printf '\033[36m[deploy]\033[0m %s\n' "$*"; }
 warn()  { printf '\033[33m[deploy]\033[0m %s\n' "$*" >&2; }
@@ -51,23 +51,42 @@ else
   info "复用已有 .env（不会被覆盖）"
 fi
 
-# 写入 / 更新 MONITOR_IMAGE（原地替换，不重排其他内容）
-if grep -q '^MONITOR_IMAGE=' .env; then
-  # 用 | 作分隔符，避免地址里的 / 冲突
-  sed -i.bak "s|^MONITOR_IMAGE=.*|MONITOR_IMAGE=${IMAGE}|" .env && rm -f .env.bak
-else
-  printf '\nMONITOR_IMAGE=%s\n' "$IMAGE" >> .env
-fi
-info "MONITOR_IMAGE = $IMAGE"
-
-# ── 3. 数据目录与权限 ──────────────────────────────────────────────────────
-# 从 .env 读取宿主机路径（容忍行尾注释与空白），缺省回落到 compose 里的默认值。
-# 注意：这里是「宿主机」路径；容器内路径程序内部写死，不在这里改。
+# 从 .env 读取宿主机配置（容忍行尾注释与空白），缺省回落到给定默认值。
+# 注意：这里读的是「宿主机」路径 / 版本号；容器内路径程序内部写死，不在这里改。
 envval() {
   local v
   v="$(sed -n "s/^$1=//p" .env | head -1 | sed 's/[[:space:]]*#.*$//' | tr -d '[:space:]')"
   printf '%s' "${v:-$2}"
 }
+
+# 镜像地址：
+#   传了参数   → 用参数指定的地址（写进 .env 固定下来）
+#   没传参数   → 移除 .env 里固定的 MONITOR_IMAGE，交给 compose 按 APP_VERSION 派生
+#                （这样以后 bump 版本号，即使不重跑本脚本也能跟着变）
+APP_VERSION="$(envval APP_VERSION 1.0.0)"
+
+if [ -n "$ARG_IMAGE" ]; then
+  IMAGE="$ARG_IMAGE"
+  # 原地替换 / 追加，不重排其它内容；用 | 作分隔符，避免地址里的 / 冲突
+  if grep -q '^MONITOR_IMAGE=' .env; then
+    sed -i.bak "s|^MONITOR_IMAGE=.*|MONITOR_IMAGE=${IMAGE}|" .env && rm -f .env.bak
+  else
+    printf '\nMONITOR_IMAGE=%s\n' "$IMAGE" >> .env
+  fi
+  info "APP_VERSION   = $APP_VERSION"
+  info "MONITOR_IMAGE = $IMAGE   （已在 .env 固定，不再跟随 APP_VERSION）"
+else
+  if grep -q '^MONITOR_IMAGE=' .env; then
+    sed -i.bak '/^MONITOR_IMAGE=/d' .env && rm -f .env.bak
+    info "已移除 .env 里固定的 MONITOR_IMAGE"
+  fi
+  IMAGE="${DEFAULT_REPO}:v${APP_VERSION}"
+  info "APP_VERSION   = $APP_VERSION"
+  info "MONITOR_IMAGE = $IMAGE   （按版本号自动派生）"
+fi
+
+# ── 3. 数据目录与权限 ──────────────────────────────────────────────────────
+# 从 .env 读取宿主机路径，缺省回落到 compose 里的默认值。
 ENGINE_CONFIG_DIR="$(envval ENGINE_CONFIG_DIR ./config/engine)"
 MONITOR_CONFIG_DIR="$(envval MONITOR_CONFIG_DIR ./config/monitor)"
 DOWNLOADS_DIR="$(envval DOWNLOADS_DIR ./data/downloads)"

@@ -1,0 +1,121 @@
+# ============================================================================
+#  打版本 tag 时自动构建镜像并推送到 Docker Hub
+#
+#  为什么放在 GitHub Actions 里跑：
+#    国内网络下 registry-1.docker.io / auth.docker.io / hub.docker.com 全部不可达，
+#    而镜像加速器只代理「拉取」、不代理「推送」，所以本地 docker push 走不通。
+#    GitHub runner 在境外，网络不受限，由它 build + push 最省事。
+#
+#  ── 触发方式 ───────────────────────────────────────────────────────────────
+#   · 推送 v* 形式的 tag（如 v1.0.1）→ 构建并推 :v1.0.1 和 :latest
+#       本地一条命令搞定： ./scripts/version.sh bump patch --push
+#   · Actions 页面手动触发 → 重建当前分支的 :latest（补推用的兜底）
+#
+#  ── 前置配置（只需做一次）──────────────────────────────────────────────────
+#  1. Docker Hub 生成 Access Token（不要用登录密码）
+#     https://hub.docker.com/settings/security → New Access Token → Read & Write
+#  2. GitHub 仓库加两个 Secret（务必加在 Actions 标签页）：
+#      Settings → Secrets and variables → Actions → New repository secret
+#        DOCKERHUB_USERNAME = 你的 Docker ID（不是邮箱）
+#        DOCKERHUB_TOKEN    = 上一步的 Access Token
+#     ⚠️ 常见错误：加到相邻的 Dependabot / Environments 标签页，那样 workflow 读不到。
+#
+#  镜像地址：<DOCKERHUB_USERNAME>/music-monitor
+# ============================================================================
+name: Build and push to Docker Hub
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      # 提前拦一道：Secret 没配 / 配错标签页时，直接给出中文原因，
+      # 否则 login-action 只会丢一句 "Username and password required"，很难排查。
+      - name: 检查 Docker Hub Secret 是否就位
+        env:
+          DH_USER: ${{ secrets.DOCKERHUB_USERNAME }}
+          DH_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+        run: |
+          missing=""
+          [ -z "$DH_USER" ]  && missing="$missing DOCKERHUB_USERNAME"
+          [ -z "$DH_TOKEN" ] && missing="$missing DOCKERHUB_TOKEN"
+          if [ -n "$missing" ]; then
+            echo "::error::缺少 Secret:$missing"
+            echo "请检查是否加在【Settings → Secrets and variables → Actions】标签页。"
+            echo "常见错误：加到了相邻的 Dependabot 或 Environments 标签页 —— 那两个位置 workflow 读不到。"
+            echo "另外确认名字拼写为 DOCKERHUB_USERNAME / DOCKERHUB_TOKEN（下划线、全大写），且是 Repository secret 而非 Variable。"
+            exit 1
+          fi
+          echo "Secret 已就位：DOCKERHUB_USERNAME 长度 ${#DH_USER}，DOCKERHUB_TOKEN 长度 ${#DH_TOKEN}"
+
+      # 版本号以代码里的 __version__ 为唯一准。若是 tag 触发，顺带校验 tag 与代码是否一致，
+      # 避免出现「tag 是 v1.0.2、镜像标签里却写着 1.0.1」这种对不上的情况。
+      - name: 读取并校验版本号
+        id: ver
+        run: |
+          VER="$(sed -n 's/^__version__ *= *"\([^"]*\)".*/\1/p' monitor/app/__init__.py | head -1)"
+          if [ -z "$VER" ]; then
+            echo "::error::读不到 monitor/app/__init__.py 里的 __version__"
+            exit 1
+          fi
+          if [ "${{ github.ref_type }}" = "tag" ]; then
+            TAG="${GITHUB_REF_NAME#v}"
+            if [ "$TAG" != "$VER" ]; then
+              echo "::error::tag v$TAG 与代码版本 $VER 不一致"
+              echo "请用 ./scripts/version.sh bump 统一改版本号后再打 tag。"
+              exit 1
+            fi
+            echo "校验通过：tag v$VER 与代码版本一致"
+          else
+            echo "非 tag 触发，使用代码版本 $VER"
+          fi
+          echo "version=$VER" >> "$GITHUB_OUTPUT"
+
+      - name: 安装 QEMU（多架构构建用）
+        uses: docker/setup-qemu-action@v3
+
+      - name: 准备 Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: 登录 Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: 计算镜像标签
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ secrets.DOCKERHUB_USERNAME }}/music-monitor
+          # tag 触发 → v1.0.1 与 latest；手动触发 → 只有 latest
+          tags: |
+            type=semver,pattern=v{{version}}
+            type=raw,value=latest
+
+      - name: 构建并推送
+        uses: docker/build-push-action@v6
+        with:
+          context: ./monitor
+          file: ./monitor/Dockerfile
+          # 两种架构都构建，x86_64 和 ARM 的 NAS 都能用
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          # 版本号跟着代码走，不在这里写死
+          build-args: |
+            APP_VERSION=${{ steps.ver.outputs.version }}
+          # 用 GitHub Actions 缓存，重复构建快很多
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          # 单平台 provenance 会生成多余的 manifest，关掉更干净
+          provenance: false
