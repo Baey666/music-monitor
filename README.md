@@ -108,6 +108,42 @@ chmod -R 777 data
 
 > 如果你不用 1000 这个 uid，请同步修改 `docker-compose.yml` 里两个服务的 `user:`。
 
+#### 数据到底落在哪
+
+卷挂载语法是 **`宿主机路径:容器内路径`**。**改左边随便改，右边不要动**——那是程序内部写死的。
+
+| 内容 | 容器内路径（别改） | 宿主机默认位置 | 值由谁决定 |
+|---|---|---|---|
+| 音乐文件 | `/home/appuser/data/downloads` | `./data/downloads/` | 引擎设置里的 `downloadDir` |
+| 引擎设置 | `/home/appuser/data/settings.db` | `./data/settings.db` | — |
+| 平台登录态 | `/home/appuser/data/cookies.json` | `./data/cookies.json` | — |
+| 监控配置库 | `/app/data/monitor.db` | `./data/monitor/monitor.db` | — |
+
+#### 想换盘 / 换目录
+
+在 `.env` 里改**宿主机路径**即可，两个服务各一个变量：
+
+```ini
+ENGINE_DATA_DIR=/vol2/music-data        # 音乐文件 + 引擎设置、登录态，一起搬走
+MONITOR_DATA_DIR=/vol2/monitor-data     # 监控服务的配置库
+```
+
+改完 `docker compose up -d` 生效。⚠️ **先把老数据 `mv` 过去再启动**，
+否则引擎会当成全新安装——所有平台都要重新扫码登录。
+
+#### 引擎的「下载目录」是另一回事
+
+引擎设置里的 `downloadDir` 填的是**容器内路径**，不是宿主机路径。
+保持默认 `data/downloads` 就会落进 `ENGINE_DATA_DIR/downloads/`。
+
+- 查看当前生效值（该接口是公开的，无需登录）：
+  ```bash
+  curl -s http://<NAS-IP>:8085/music/settings
+  ```
+- 想改成容器内的其它目录，**必须同时在 compose 里加对应挂载**，
+  否则那个路径在宿主机上不可见，等于文件写了但拿不出来。
+- 想确认某次下载真落到哪：`POST /music/download` 的返回里有 `path` 字段，就是实际写入位置。
+
 ### 2.（可选但推荐）配置 .env
 
 ```bash

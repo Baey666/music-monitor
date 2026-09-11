@@ -61,10 +61,23 @@ fi
 info "MONITOR_IMAGE = $IMAGE"
 
 # ── 3. 数据目录与权限 ──────────────────────────────────────────────────────
+# 从 .env 读取宿主机路径（容忍行尾注释与空白），缺省回落到 compose 里的默认值。
+# 注意：这里是「宿主机」路径；容器内路径程序内部写死，不在这里改。
+envval() {
+  local v
+  v="$(sed -n "s/^$1=//p" .env | head -1 | sed 's/[[:space:]]*#.*$//' | tr -d '[:space:]')"
+  printf '%s' "${v:-$2}"
+}
+ENGINE_DATA_DIR="$(envval ENGINE_DATA_DIR ./data)"
+MONITOR_DATA_DIR="$(envval MONITOR_DATA_DIR ./data/monitor)"
+
 # 两个容器都以 uid=1000 运行，宿主机目录必须可写，否则容器起不来或写不进文件
-mkdir -p data/downloads data/monitor
-chmod -R 777 data 2>/dev/null || warn "chmod 失败，若容器报权限错误请手动处理：sudo chmod -R 777 data"
-info "数据目录就绪：./data/downloads  ./data/monitor"
+mkdir -p "$ENGINE_DATA_DIR/downloads" "$MONITOR_DATA_DIR"
+chmod -R 777 "$ENGINE_DATA_DIR" "$MONITOR_DATA_DIR" 2>/dev/null \
+  || warn "chmod 失败，若容器报权限错误请手动处理：sudo chmod -R 777 '$ENGINE_DATA_DIR' '$MONITOR_DATA_DIR'"
+info "音乐文件    : $ENGINE_DATA_DIR/downloads"
+info "引擎配置    : $ENGINE_DATA_DIR/{settings.db, cookies.json}"
+info "监控配置    : $MONITOR_DATA_DIR/monitor.db"
 
 # ── 4. 拉取镜像 ────────────────────────────────────────────────────────────
 info "拉取镜像（国内直连 Docker Hub 常超时，下面若失败请看脚本末尾的加速器提示）..."
@@ -98,22 +111,28 @@ info "启动容器..."
 info "容器状态："
 "${DC[@]}" ps
 
-PORT="$(grep -E '^MONITOR_PORT=' .env | cut -d= -f2 | tr -d '[:space:]' || true)"
-EPORT="$(grep -E '^ENGINE_PORT=' .env | cut -d= -f2 | tr -d '[:space:]' || true)"
+PORT="$(envval MONITOR_PORT 9090)"
+EPORT="$(envval ENGINE_PORT 8085)"
 cat <<EOF
 
 ================================================================
-部署完成  （数据都在 ./data/ 下，删容器不丢数据）
+部署完成  （删容器不丢数据，数据都在宿主机这几处）
+  音乐文件     $ENGINE_DATA_DIR/downloads
+  引擎配置     $ENGINE_DATA_DIR/settings.db、cookies.json
+  监控配置     $MONITOR_DATA_DIR/monitor.db
 
-  监控控制台   http://<NAS-IP>:${PORT:-9090}
-  下载引擎     http://<NAS-IP>:${EPORT:-8085}
+  监控控制台   http://<NAS-IP>:${PORT}
+  下载引擎     http://<NAS-IP>:${EPORT}
 
   首次使用必做（见 README「快速开始」第 4 步）：
-   1. 打开引擎页面 :${EPORT:-8085}，用日志里的初始化令牌建管理员账号
+   1. 打开引擎页面 :${EPORT}，用日志里的初始化令牌建管理员账号
         ${DC[*]} logs go-music-dl | grep "Web setup token"
-   2. 引擎设置里把本地下载目录设为 data/downloads
+   2. 引擎设置里把「下载目录 / downloadDir」设为 data/downloads
+        · 这里填的是**容器内路径**，默认值就直接落进
+          $ENGINE_DATA_DIR/downloads
+        · 想看当前生效值：curl -s http://<NAS-IP>:${EPORT}/music/settings
    3. 扫码登录有会员的平台（这决定能拿到什么音质）
-   4. 回到 :${PORT:-9090} 建第一个监控
+   4. 回到 :${PORT} 建第一个监控
 
   查看日志   ${DC[*]} logs -f monitor
   停止       ${DC[*]} down

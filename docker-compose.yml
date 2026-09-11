@@ -27,8 +27,14 @@ services:
       # 左边是宿主机端口，被占用时改左边即可
       - "${ENGINE_PORT:-8085}:8080"
     volumes:
-      # 引擎的数据目录：下载文件、Cookie、设置、SQLite 都在这里
-      - ./data:/home/appuser/data
+      # ── 卷挂载语法： 宿主机路径 : 容器内路径 ──────────────────────────────
+      # ★ 改左边（宿主机）随便改；右边（容器内）不要动——那是程序内部写死的路径。
+      # 默认 ./data 下的内容：
+      #     downloads/    下载的音乐文件
+      #     settings.db   引擎设置（含 downloadDir 下载目录）
+      #     cookies.json  各平台登录态（决定能拿到什么音质）
+      # 想放到第二块盘就在 .env 里设 ENGINE_DATA_DIR=/vol2/music-data
+      - ${ENGINE_DATA_DIR:-./data}:/home/appuser/data
     environment:
       - TZ=${TZ:-Asia/Shanghai}
     # 官方镜像以 uid=1000 运行，宿主机 data 目录需要可写（见 README 的初始化步骤）
@@ -57,8 +63,9 @@ services:
     ports:
       - "${MONITOR_PORT:-9090}:9090"
     volumes:
-      # 监控自身的数据（SQLite 配置库），与引擎数据分开，避免互相干扰
-      - ./data/monitor:/app/data
+      # 监控自身的数据（SQLite 配置库：监控项、曲目记录、运行历史），
+      # 与引擎数据分开，避免互相干扰。同样只改左边。
+      - ${MONITOR_DATA_DIR:-./data/monitor}:/app/data
     environment:
       # 引擎地址（容器内网络，无需改动）
       - ENGINE_URL=http://music-dl:8080
