@@ -215,3 +215,18 @@ registry:
 
 **Q：push 报 `denied: requested access to the resource is denied`？**
 三种可能：没登录 / token 权限不够（要 Read & Write）/ 地址里的命名空间不是你的。
+
+**Q：我能在 Windows / Mac 上装 Docker Desktop 来构建镜像吗？**
+可以。构建机不需要是 NAS，装了 Docker Desktop 的电脑一样能构建并推送。
+
+- **要求**：Windows 10 21H2+ 或 Windows 11（64 位）、CPU 支持虚拟化且 BIOS 里已开启、内存 ≥4 GB。
+  Windows **家庭版**走 **WSL2** 后端，先在管理员 PowerShell 里执行 `wsl --install` 然后重启。
+- **授权**：Docker Desktop 对个人使用、学习、小企业**免费**。
+  需要付费订阅的是「员工超过 250 人 **或** 年营收超过 1000 万美元」的企业。
+- **不想用 Docker Desktop**：可以换 **Rancher Desktop** 或 **Podman Desktop**，都是开源、无授权限制。
+- **架构**：WSL2 后端构建出来的是 `linux/amd64`。NAS 若是 arm64，需要多架构构建，
+  见 [deploy.md 的架构章节](deploy.md#架构必须匹配最常见的翻车点)。
+
+**Q：装了 Docker Desktop 之后，每次都要开着吗？**
+不用。`docker` 命令依赖守护进程，构建/推送时必须启动 Docker Desktop；
+用完可以在托盘图标右键退出，并在设置里关掉「开机自启动」，避免常驻占 1~2 GB 内存。
