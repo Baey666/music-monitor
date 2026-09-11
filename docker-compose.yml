@@ -41,6 +41,7 @@ services:
       - "${MONITOR_PORT:-9090}:9090"
     volumes:
       - ${MONITOR_CONFIG_DIR:-./config/monitor}:/app/data  # 监控配置库（SQLite）
+      - ${DOWNLOADS_DIR:-./data/downloads}:/downloads:ro  # 仅用于判断文件是否仍存在
     environment:
       - ENGINE_URL=http://music-dl:8080
       - ENGINE_PREFIX=${ENGINE_PREFIX:-/music}

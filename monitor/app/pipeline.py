@@ -4,13 +4,15 @@ from __future__ import annotations
 import asyncio
 import difflib
 import logging
+import os
 import re
+from pathlib import Path
 from typing import Any
 
 from . import quality as q
 from .charts import resolve_chart
 from .config import settings
-from .db import Database, fingerprint, now_iso
+from .db import Database, now_iso
 from .engine import Engine, EngineError
 
 log = logging.getLogger("monitor.pipeline")
@@ -40,6 +42,22 @@ def similarity(name_a: str, artist_a: str, name_b: str, artist_b: str) -> float:
 
 def _keywords(raw: str) -> list[str]:
     return [k.strip().lower() for k in re.split(r"[,，;；\s]+", raw or "") if k.strip()]
+
+
+def _file_exists(file_path: str) -> bool:
+    if not file_path:
+        return False
+    path = Path(file_path)
+    if path.is_absolute():
+        candidates = [path]
+        marker = "/home/appuser/data/downloads/"
+        if marker in path.as_posix():
+            candidates.append(Path("/downloads") / path.as_posix().split(marker, 1)[1])
+        return any(candidate.is_file() for candidate in candidates)
+    # go-music-dl 返回的通常是 data/downloads/...，对应 monitor 的只读 /downloads。
+    if str(path).startswith("data/downloads/"):
+        return (Path("/downloads") / path.relative_to("data/downloads")).is_file()
+    return False
 
 
 def _match_keywords(song: dict[str, Any], include: list[str], exclude: list[str]) -> bool:
@@ -283,8 +301,7 @@ async def run_monitor(db: Database, engine: Engine, mon: dict[str, Any]) -> dict
         include = _keywords(mon.get("include_kw", ""))
         exclude = _keywords(mon.get("exclude_kw", ""))
         existing = db.existing_song_keys(mon["id"])
-        db_fingerprints = db.downloaded_fingerprints()
-
+        downloaded_paths = db.downloaded_tracks(mon["id"])
         quality = q.normalize_quality(mon.get("quality"))
         sources = mon.get("sources") or []
         max_downloads = min(int(mon.get("max_downloads") or 30), settings.max_downloads_per_run)
@@ -293,8 +310,8 @@ async def run_monitor(db: Database, engine: Engine, mon: dict[str, Any]) -> dict
         todo: list[dict[str, Any]] = []
         for s in songs:
             key = (str(s.get("source", "")), str(s.get("id", "")))
-            if key in existing:
-                # 已见过：只刷新命中次数与最后出现时间
+            if key in existing and key in downloaded_paths and _file_exists(downloaded_paths[key]):
+                # 只有数据库记录仍对应真实文件时才跳过；文件被删后必须重新下载。
                 db.touch_track(mon["id"], s)
                 skipped += 1
                 continue
@@ -302,10 +319,8 @@ async def run_monitor(db: Database, engine: Engine, mon: dict[str, Any]) -> dict
                 db.upsert_track(mon["id"], s, status="skipped", error="被关键词规则过滤")
                 skipped += 1
                 continue
-            if fingerprint(s.get("name", ""), s.get("artist", "")) in db_fingerprints:
-                db.upsert_track(mon["id"], s, status="downloaded", quality_actual="已在库中", error="")
-                skipped += 1
-                continue
+            # 不用 monitor 数据库的历史记录拦截：文件可能已被用户删除。
+            # go-music-dl 会在真正下载时按当前文件/下载记录判断是否跳过。
             todo.append(s)
 
         new_items = len(todo)

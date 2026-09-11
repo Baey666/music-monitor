@@ -263,6 +263,14 @@ class Database:
         rows = self.query("SELECT source, song_id FROM tracks WHERE monitor_id = ?", (monitor_id,))
         return {(r["source"], r["song_id"]) for r in rows}
 
+    def downloaded_tracks(self, monitor_id: int) -> dict[tuple[str, str], str]:
+        rows = self.query(
+            "SELECT source, song_id, file_path FROM tracks "
+            "WHERE monitor_id = ? AND status = 'downloaded'",
+            (monitor_id,),
+        )
+        return {(r["source"], r["song_id"]): (r["file_path"] or "") for r in rows}
+
     def upsert_track(self, monitor_id: int, song: dict[str, Any], status: str, **kw: Any) -> None:
         ts = now_iso()
         self.execute(

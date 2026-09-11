@@ -116,6 +116,7 @@ const App = (() => {
     try {
       const data = await api('/health');
       const ok = data.engine && data.engine.ok;
+      if ($('app-version')) $('app-version').textContent = '版本 v' + (data.version || '未知');
       $('engine-pill').className = 'pill ' + (ok ? 'ok' : 'bad');
       $('engine-text').textContent = ok ? '引擎正常' : '引擎不可用';
       const s = data.scheduler || {};

@@ -1,516 +1,326 @@
 # music-monitor
 
-在 [go-music-dl](https://github.com/guohuiyuan/go-music-dl) 之上加了一层**「榜单 / 歌单 / 收藏夹」监控 → 自动下载**的编排服务。
+基于 [go-music-dl](https://github.com/guohuiyuan/go-music-dl) 的音乐榜单、歌单和收藏夹监控下载服务。
 
-go-music-dl 本身是一个「搜索 → 下载」的工具：你得先找到歌，它才下载。
-这个项目补的是前半段——**让歌自己找上门**：
+它会定时检查你关注的内容，发现新歌曲后自动下载，并在下载前检查歌曲版本和音源，尽量避免下载试听片段、现场版、演唱会版、DJ 版或 Remix 版本。
 
-- 持续盯着各平台的热门榜单，一有新歌就自动下载；
-- 盯着你指定的歌单链接，歌单更新了自动补齐；
-- 盯着你自己的收藏夹 / 我喜欢的音乐，收藏一首自动落盘；
-- 下载前会**探测真实码率**，不达标就去别的平台找同曲目的更好版本。
+## 主要功能
 
----
+- 监控热门榜单
+- 监控指定歌单
+- 监控个人收藏夹和「我喜欢的音乐」
+- 发现新歌曲后自动下载
+- 支持网易云、QQ 音乐、酷狗、酷我、咪咕、汽水、哔哩哔哩等平台
+- 下载前检查音源是否可用、码率是否满足要求
+- 正式版优先，改编版仅在正式版不可用时作为兜底
+- 过滤试听、Live、现场、演唱会、跨年、DJ、混音、Remix 等版本
+- 失败自动重试，逐首等待上游结果，避免一次提交整批任务
+- 监控记录、下载记录和平台登录状态持久化保存
 
-## 目录结构
+## 工作方式
 
-仓库里的东西按用途分三类，互不混淆：
+项目由两个容器组成：
 
-| 类别 | 位置 |
-|---|---|
-| **项目内容**（源码 / 部署清单 / 运行时数据） | `monitor/`、`config/`、`data/`、`docker-compose.yml`、`.env.example` |
-| **部署与发布**（文档 / 脚本） | `docs/`、`scripts/` |
-| **机器本地工具与登录态** | **不在本仓库内**（如 gh CLI 便携版放在 `Ai项目库\.gh\`） |
-
+```text
+music-monitor（监控服务，9090）
+        │
+        │ 容器内网络 HTTP
+        ▼
+ go-music-dl（下载引擎，8085）
+        │
+        ▼
+ 宿主机音乐目录
 ```
+
+### music-monitor
+
+负责：
+
+- 定时读取榜单、歌单和收藏夹
+- 判断哪些歌曲是新增歌曲
+- 检查正式版、时长和可用音源
+- 选择合适的下载来源
+- 调用 go-music-dl 下载
+- 记录成功、失败和跳过原因
+
+### go-music-dl
+
+负责：
+
+- 搜索和解析音乐平台
+- 获取音源
+- 保存音乐文件
+- 管理 Cookie 和平台登录状态
+- 管理下载记录和文件名格式
+
+## 部署
+
+### 使用 Docker Compose
+
+准备以下目录：
+
+```text
 music-monitor/
-├── README.md               # 本文件：项目总览
-├── CHANGELOG.md            # 更新日志（每次发版在这里记一笔）
-├── LICENSE
-├── docker-compose.yml      # 两个服务：引擎 + 监控
-├── .env.example            # 端口 / 音质 / 并发 / 版本号 / 落盘路径
-├── docs/                   # 文档
-│   └── deploy.md           #   → 部署到 NAS（三种方案怎么选）
-├── scripts/                # 脚本
-│   ├── deploy-nas.sh       #   ★ NAS 上一键部署（拉现成镜像，幂等可重复跑）
-│   └── version.sh          #   ★ 版本管理（show / check / sync / bump）
-├── config/                 # ★ 所有配置与设置（内容不入库，只留占位）
-│   ├── engine/             #   ← 引擎设置 settings.db + 登录态 cookies.json
-│   └── monitor/            #   ← 监控自己的 SQLite（监控配置、曲目记录）
-├── data/                   # 纯数据（内容不入库，只留占位）
-│   └── downloads/          #   ← 下载下来的音乐文件
-└── monitor/                # 本项目新增的服务
-    ├── Dockerfile
-    ├── .dockerignore
-    ├── requirements.txt
-    ├── app/
-    │   ├── main.py         # FastAPI 入口 + 生命周期
-    │   ├── api.py          # REST 接口
-    │   ├── runtime.py      # 共享运行时对象
-    │   ├── config.py       # 环境变量配置
-    │   ├── db.py           # SQLite（监控 / 曲目 / 运行记录）
-    │   ├── engine.py       # go-music-dl 客户端
-    │   ├── parser.py       # 解析引擎返回的 HTML 页面
-    │   ├── charts.py       # 内置榜单注册表
-    │   ├── quality.py      # 音质等级与择优策略
-    │   ├── pipeline.py     # 核心：发现 → 去重 → 择优 → 下载
-    │   └── scheduler.py    # 轮询调度器
-    ├── tests/              # 离线端到端测试（不进镜像）
-    └── web/                # 零构建前端（原生 JS 单页）
+├── docker-compose.yml
+├── config/
+│   ├── engine/
+│   └── monitor/
+└── data/
+    └── downloads/
 ```
 
----
-
-## 架构
-
-```
-        ┌──────────────────────────────────────────────┐
-        │  monitor （本项目，端口 9090）                 │
-        │  · 定时轮询榜单 / 歌单 / 收藏夹                 │
-        │  · 增量比对，只处理新出现的歌                   │
-        │  · /inspect 探测码率，不达标则跨平台找更好的版本  │
-        │  · 触发引擎下载，记录结果                       │
-        └───────────────┬──────────────────────────────┘
-                        │ HTTP（容器内网）
-                        ▼
-        ┌──────────────────────────────────────────────┐
-        │  music-dl （官方镜像，端口 8085）              │
-        │  · 多平台搜索 / 歌单解析 / 换源                 │
-        │  · 按平台 Cookie 的会员等级取最佳音质           │
-        │  · 落盘 + 去重 + 文件名模板 + 可选 WebDAV 上传   │
-        └───────────────┬──────────────────────────────┘
-                        ▼
-                  ./data/downloads/
-```
-
-**为什么不让监控服务自己下载？**
-因为音质、去重、文件名模板、WebDAV 这些能力上游已经做好了，重复实现只会更差。
-监控服务只做上游没有的那部分：**榜单发现 + 增量比对 + 音质择优**。
-
----
-
-## 快速开始
-
-### 0. 前置
-
-- Docker + Docker Compose
-- 宿主机终端能执行 `mkdir` / `chmod`
-
-### 1. 初始化配置与数据目录
-
-官方镜像以 `uid=1000` 运行，挂载目录必须可写，否则容器起不来或写不进文件。
+创建目录并设置权限：
 
 ```bash
-cd music-monitor
 mkdir -p config/engine config/monitor data/downloads
 chmod -R 777 config data
 ```
 
-> 如果你不用 1000 这个 uid，请同步修改 `docker-compose.yml` 里两个服务的 `user:`。
-
-#### 配置和数据落在哪
-
-设计原则：**配置归 `config/`，大文件归 `data/`** —— 备份只要打包 `config/`（几 MB），
-不用碰几百 GB 的音乐。
-
-```
-music-monitor/
-├── config/                        ← 所有配置与设置（备份就打包这个目录）
-│   ├── engine/                    → 容器 /home/appuser/data
-│   │   ├── settings.db            引擎设置（含 downloadDir 下载目录这一项）
-│   │   ├── settings.db-wal/-shm   SQLite 日志与共享内存（必须与 db 同目录）
-│   │   └── cookies.json           各平台登录态（决定能拿到什么音质）
-│   └── monitor/                   → 容器 /app/data
-│       └── monitor.db             监控项、曲目记录、运行历史
-└── data/
-    └── downloads/                 → 容器 /home/appuser/data/downloads（音乐文件）
-```
-
-卷挂载语法是 **`宿主机路径:容器内路径`**。**改左边随便改，右边不要动**——那是程序内部写死的。
-
-| 内容 | 容器内路径（别改） | 宿主机默认位置 |
-|---|---|---|
-| 引擎设置 | `/home/appuser/data/settings.db` | `config/engine/settings.db` |
-| 平台登录态 | `/home/appuser/data/cookies.json` | `config/engine/cookies.json` |
-| 监控配置库 | `/app/data/monitor.db` | `config/monitor/monitor.db` |
-| 音乐文件 | `/home/appuser/data/downloads` | `data/downloads/` |
-
-> **为什么要用两条挂载拆开引擎的数据？**
-> 引擎把「设置/Cookie」和「下载的音乐」都写在同一个 data 根目录下（无法从镜像里改）。
-> 所以外层挂载接住整个根目录 → `config/engine/`，
-> 再用一条**更深的路径** `/home/appuser/data/downloads` 单独指向 `data/` 把它盖回来。
-> Docker 会按目标路径深度排序挂载，内层优先，这是既定行为。
-
-#### 想换盘 / 换目录
-
-在 `.env` 里改**宿主机路径**即可：
-
-```ini
-ENGINE_CONFIG_DIR=/vol2/mm-config/engine    # 引擎设置 + 登录态
-MONITOR_CONFIG_DIR=/vol2/mm-config/monitor  # 监控配置库
-DOWNLOADS_DIR=/vol2/music                   # 音乐文件（体积大，通常单独放一块盘）
-```
-
-改完 `docker compose up -d` 生效。⚠️ **先把老数据 `mv` 过去再启动**，
-否则引擎会当成全新安装——所有平台都要重新扫码登录。
-
-#### 从旧版 `data/` 布局迁移
-
-如果你在改成 `config/` 之前已经部署过，数据在 `data/` 里，**先搬家再启动**：
+启动：
 
 ```bash
-cd music-monitor
-docker compose down
+docker compose up -d
+```
 
-mkdir -p config/engine config/monitor
-mv data/settings.db* data/cookies.json config/engine/ 2>/dev/null   # 引擎设置 + 登录态
-mv data/monitor/monitor.db config/monitor/ 2>/dev/null              # 监控配置库
-# data/downloads 原地不动，音乐文件不用搬
+查看状态：
 
+```bash
+docker compose ps
+```
+
+查看日志：
+
+```bash
+docker compose logs -f
+```
+
+如果设备使用旧版 Compose 命令，把 `docker compose` 换成 `docker-compose`。
+
+### 飞牛 NAS
+
+如果 Compose 文件放在飞牛的应用目录，例如：
+
+```text
+/vol1/docker/music-monitor/
+```
+
+直接在该目录执行：
+
+```bash
+cd /vol1/docker/music-monitor
+mkdir -p config/engine config/monitor data/downloads
 chmod -R 777 config data
+docker compose pull
 docker compose up -d
 ```
 
-> 注意 `settings.db*` 的星号：SQLite 的 `-wal` / `-shm` 文件**必须跟着一起搬**，
-> 否则可能丢最近几次设置变更甚至库损坏。
+如果 Docker Hub 在当前网络不可直接访问，使用 Compose 文件中配置的镜像加速地址，或将 monitor 镜像地址改为：
 
-#### 引擎的「下载目录」是另一回事
+```yaml
+image: docker.1ms.run/baey666/music-monitor:v1.0.4
+```
 
-引擎设置里的 `downloadDir` 填的是**容器内路径**，不是宿主机路径。
-保持默认 `data/downloads` 就会落进 `DOWNLOADS_DIR/`。
+如果 `9090` 端口已被占用，把宿主机端口改为其他端口，例如：
 
-- 查看当前生效值（该接口是公开的，无需登录）：
-  ```bash
-  curl -s http://<NAS-IP>:8085/music/settings
-  ```
-- 想改成容器内的其它目录，**必须同时在 compose 里加对应挂载**，
-  否则那个路径在宿主机上不可见，等于文件写了但拿不出来。
-- 想确认某次下载真落到哪：`POST /music/download` 的返回里有 `path` 字段，就是实际写入位置。
+```yaml
+ports:
+  - "9091:9090"
+```
 
-### 2.（可选但推荐）配置 .env
+右侧的容器端口 `9090` 不要修改。修改后访问：
+
+```text
+http://飞牛IP:9091
+```
+
+## 访问地址
+
+假设 NAS 地址是 `192.168.10.88`：
+
+```text
+音乐下载引擎：http://192.168.10.88:8085
+监控控制台：  http://192.168.10.88:9090
+```
+
+如果你修改了监控宿主机端口，例如改为 `9091`，就访问 `9091`。
+
+## 首次初始化
+
+### 1. 初始化 go-music-dl 管理员
+
+打开：
+
+```text
+http://NAS-IP:8085/music/setup
+```
+
+初始化令牌从日志中查看：
 
 ```bash
-cp .env.example .env
+docker compose logs go-music-dl | grep "Web setup token"
 ```
 
-关键项：
+使用令牌进入初始化页面，然后自行设置管理员用户名和密码。
 
-| 变量 | 默认 | 说明 |
+### 2. 设置下载目录
+
+在 go-music-dl 设置中，把本地下载目录设置为：
+
+```text
+data/downloads
+```
+
+不要填写 NAS 宿主机路径。
+
+### 3. 登录音乐平台
+
+在 go-music-dl 中扫码登录需要使用的平台。登录状态会保存到：
+
+```text
+config/engine/cookies.json
+```
+
+是否有会员 Cookie，会影响可获取的音质和歌曲范围。
+
+### 4. 创建监控
+
+打开：
+
+```text
+http://NAS-IP:9090
+```
+
+然后：
+
+1. 进入「热门榜单」或「歌单 / 收藏夹」
+2. 选择平台和目标内容
+3. 先点击预览，确认歌曲列表正确
+4. 创建监控
+5. 按需要打开自动下载
+
+## 配置和数据路径
+
+默认 Compose 挂载如下：
+
+```yaml
+volumes:
+  - ./config/engine:/home/appuser/data
+  - ./data/downloads:/home/appuser/data/downloads
+  - ./config/monitor:/app/data
+```
+
+对应关系：
+
+| 内容 | 宿主机位置 | 容器内位置 |
 |---|---|---|
-| `ENGINE_PORT` | 8085 | go-music-dl 网页端口 |
-| `MONITOR_PORT` | 9090 | 本监控控制台端口 |
-| `TICK_SECONDS` | 60 | 调度心跳，决定「最快多久发现一次新歌」 |
-| `DOWNLOAD_CONCURRENCY` | 3 | 单监控并发下载数 |
-| `DEFAULT_QUALITY` | lossless | 默认目标音质 |
+| go-music-dl 设置和 Cookie | `config/engine/` | `/home/appuser/data/` |
+| 监控数据库 | `config/monitor/` | `/app/data/` |
+| 音乐文件 | `data/downloads/` | `/home/appuser/data/downloads/` |
 
-### 3. 启动
+想把音乐放到其他硬盘，只修改左侧宿主机路径，例如：
+
+```yaml
+volumes:
+  - ./config/engine:/home/appuser/data
+  - "/vol2/1000/机械硬盘/#media/downloads/Music:/home/appuser/data/downloads"
+  - ./config/monitor:/app/data
+```
+
+程序中的下载目录仍然填写：
+
+```text
+data/downloads
+```
+
+不要把宿主机的 `/vol2/.../Music` 填到 go-music-dl 的下载目录设置中。
+
+## 下载版本规则
+
+下载时按以下顺序选择：
+
+```text
+1. 优先监控内容中的原始歌曲
+2. 优先歌名、歌手和时长匹配的正式版本
+3. 原平台不可用时，寻找其他平台的正式版本
+4. 只要正式版本可用，就不下载 Live、演唱会、DJ、Remix 等改编版
+5. 正式版本全部不可用时，改编版才可以作为兜底
+6. 试听片段始终不下载
+```
+
+歌曲和候选版本的时长差异过大时，也会被跳过。
+
+## 音质说明
+
+go-music-dl 的下载接口不能强制绕过平台权限。实际音质取决于：
+
+- 平台账号是否登录
+- Cookie 是否有效
+- 是否拥有对应会员权限
+- 歌曲是否存在版权限制
+- 平台实际返回的音源
+
+监控服务会在下载前检查码率和格式，但不能绕过 VIP 或版权限制。
+
+推荐在 `.env` 中使用：
+
+```env
+DEFAULT_QUALITY=lossless
+DOWNLOAD_CONCURRENCY=1
+DOWNLOAD_RETRIES=2
+```
+
+## 失败和漏下载处理
+
+每首歌曲会：
+
+1. 单独检查音源
+2. 单独提交下载
+3. 等待上游返回结果
+4. 失败后自动重试
+5. 确认保存成功后才记录为已下载
+
+失败的歌曲会记录在监控页面中，可以在后续重新执行或重试。
+
+查看日志：
 
 ```bash
-docker compose up -d
-docker compose logs -f monitor      # 看监控服务日志
+docker compose logs -f monitor
 ```
 
-打开控制台：`http://<NAS-IP>:9090`
-
-### 4. 初始化 go-music-dl（必须做一次）
-
-打开 `http://<NAS-IP>:8085`：
-
-1. **创建管理员账号**：初始化令牌在容器日志里——
-   ```bash
-   docker compose logs go-music-dl | grep "Web setup token"
-   ```
-2. **设置本地下载目录**为 `data/downloads`（设置面板里选「自定义目录」）。
-   这样下载产物会落到宿主机 `./data/downloads/`。
-3. **扫码登录有会员的平台**（网易云 / QQ / 酷狗 / Bilibili）。这一步决定你能拿到什么音质。
-4. 建议打开 **「自动选择无效音源批量换源」**。
-
-### 5. 回到 9090 建第一个监控
-
-控制台 →「热门榜单」→ 选平台 → 点某榜单的「预览曲目」→ 确认有曲目 → 「创建监控」。
-
----
-
-## 部署
-
-本仓库只放**项目本身**。把服务跑起来，看 **[docs/deploy.md](docs/deploy.md)** 就够
-（三种方案怎么选、国内网络注意事项、权限与备份都在里面）。
-
-**一句话版本**：镜像已发布在 Docker Hub，按版本号拉取（当前 `baey666/music-monitor:v1.0.0`，
-另有 `latest` 跟随最新发布）。NAS 上 `git clone` 本仓库后执行 `./scripts/deploy-nas.sh` 即可；
-不想用脚本就 `docker compose pull && docker compose up -d`（`.env` 里的 `APP_VERSION` 决定拉哪个版本）。
-引擎用官方镜像 `guohuiyuan/go-music-dl`，不需要构建。
-如果你自己改了代码，`docker compose up -d --build` 会在本机重新构建。
-
-> **关于版本号**：本项目遵循[语义化版本](https://semver.org/lang/zh-CN/)，版本号唯一来源是
-> `monitor/app/__init__.py` 的 `__version__`。改版本用 `./scripts/version.sh bump <patch|minor|major>`，
-> 它会同步所有文件、写 CHANGELOG、打 git tag。详见下方[版本管理](#版本管理)。
-
-> **给原作者**：构建并推送镜像、把代码发 GitHub 这类**发布流程**资料不在本仓库里
-> （放在项目外的 `music-monitor-deploy/`），避免和项目内容混在一起。
-
----
-
-## 音质是怎么工作的（务必读）
-
-**go-music-dl 的下载接口没有 `quality` 参数**，实际音质由**该平台账号 Cookie 的会员等级**决定。
-所以本项目不做「指定音质参数」这种假装能绕过会员的事，而是做**择优 + 校验**：
-
-```
-榜单给到曲目 (source=netease, id=xxx)
-        │
-        ├─ /inspect 探测真实码率 + 体积
-        │     达标 → 直接下载
-        │
-        ├─ 不达标 → /switch_source 让引擎在其它平台找最接近的版本（相似度+时长+可播放校验）
-        │     │  达标 → 换源下载
-        │
-        ├─ 还不达标 → 用「歌名 + 歌手」在允许的平台里搜索，逐个探测候选
-        │
-        └─ 全都不达标 → 按每个监控的策略处理：
-              best_effort：取所有候选里码率最高的那个，音质降级但不丢歌
-              skip        ：不下载，记为「未达音质」，等升级 Cookie 后重试
-```
-
-| 等级 | 判据 | 现实预期 |
-|---|---|---|
-| `standard` | ≥ 96 kbps | 无会员也能拿到 |
-| `high` | ≥ 256 kbps | 多数源可拿到 |
-| `lossless` | ≥ 700 kbps，或扩展名为 flac/ape/wav | **需要会员 Cookie**，网易云/QQ/酷狗/Bilibili 支持 |
-| `hires` | ≥ 1400 kbps | 极少见，基本都会降级 |
-
-> 曲目记录里会写明**实际拿到的音质**（例如 `无损 FLAC 985kbps`、`MP3 320kbps`），
-> 不会被「目标音质」的标签糊弄过去。
-
-想批量写入会员 Cookie：控制台 →「设置」→ 填引擎管理员账号并登录 →「代写平台 Cookie」粘贴 JSON。
-
----
-
-## 三种监控类型
-
-### 1. 热门榜单（chart）
-
-可多选平台与榜单。内置清单见 `monitor/app/charts.py`。
-
-| 平台 | 榜单 | 置信度 |
-|---|---|---|
-| 网易云 | 飙升榜 / 新歌榜 / 热歌榜 / 原创榜 | 高（官方歌单 ID，直接解析） |
-| 网易云 | 欧美热歌榜 / 韩语榜 / 日语榜 | 中（ID 可能变动，界面可「校验」） |
-| QQ 音乐 | 热歌榜 / 新歌榜 / 飙升榜 / 流行指数 / 内地 / 港台 / 欧美 / 日本 / 韩国 | 中（用榜单页链接交给引擎识别） |
-| 酷狗 | TOP500 / 飙升榜 / 新歌榜 | 中 |
-| 酷我 | 热歌榜 | 低（需自行确认） |
-| Apple Music | Top 100: Global / 中国大陆 | 中（**只能下 preview 试听片段**） |
-| JOOX | 排行榜 | 中 |
-
-**榜单会因为平台改版失效**，这是行业常态，不是 bug。界面提供了「校验」按钮：
-- 校验通过的榜单会显示 `N 首`；
-- 失效的会显示红色原因，删掉或换成自定义榜单即可；
-- 也可以随时用「自定义榜单」粘贴任意歌单链接（引擎支持解析的平台都行）。
-
-### 2. 指定歌单（playlist）
-
-粘贴歌单链接（支持多行），引擎会自动识别来源平台。歌单更新后，新增曲目会被自动下载。
-
-### 3. 个人收藏夹（favorites）
-
-先到「歌单 / 收藏夹」页面勾选平台 → 「读取我的收藏」，会列出你在该平台账号下的歌单与收藏夹
-（网易云 / QQ / 酷狗 / 汽水支持；QQ 的「我喜欢的歌曲」也在其中）。
-勾选要跟踪的，一键创建监控。
-
----
-
-## 与引擎的接口对照
-
-监控服务对上游的依赖（都是公开接口，无需登录）：
-
-| 用途 | 上游接口 | 说明 |
-|---|---|---|
-| 健康检查 | `GET /music/healthz` | |
-| 平台清单 | `GET /music/` | 解析「搜索源设置」里的能力标记 |
-| 搜索 | `GET /music/search?q=&type=song\|playlist\|album&sources=` | 返回 HTML，按 `data-*` 属性解析 |
-| 歌单曲目 | `GET /music/playlist?id=&source=` | 同上 |
-| 个人歌单 | `GET /music/user_playlists?sources=` | 需引擎侧已配置 Cookie |
-| 音质探测 | `GET /music/inspect?id=&source=&duration=` | 返回 `{valid,url,size,bitrate}` |
-| 跨平台换源 | `GET /music/switch_source?name=&artist=&current=` | 引擎内置相似度 + 时长 + 可播放校验 |
-| 去重预检 | `POST /music/api/downloads/precheck` | 引擎的持久化下载指纹 |
-| 触发下载 | `POST /music/download?save_local=1&...` | 需 `X-Requested-With: XMLHttpRequest` |
-| 平台 Cookie | `GET/POST /music/cookies` | 需要引擎管理员会话 |
-| 引擎设置 | `GET/POST /music/settings` | GET 公开，POST 需登录 |
-
-> 上游把搜索类接口做成了服务端渲染的 HTML（它自己的前端也是整页跳转）。
-> 本项目在 `parser.py` 里按页面稳定的 `data-*` 属性解析——这些属性是上游自己做批量操作时用的，
-> 比按样式或文案解析稳得多。万一上游改版导致解析为空，只需改 `parser.py` 一个文件。
-
----
-
-## 版本管理
-
-本项目遵循[语义化版本](https://semver.org/lang/zh-CN/)。版本号有**一个唯一来源**和**一条发布命令**，
-不再手改四处文件、也不再出现「不知道跑的是哪个版本」的问题。
-
-### 版本号从哪来、到哪去
-
-| 角色 | 位置 | 说明 |
-|---|---|---|
-| **唯一来源** | `monitor/app/__init__.py` → `__version__` | 代码里读的就是它 |
-| Dockerfile | `ARG APP_VERSION` | 构建时注入，写进 OCI 元数据 |
-| `.env` | `APP_VERSION=x.y.z` | 决定拉哪个版本的镜像 |
-| docker-compose.yml | `image: …:v${APP_VERSION}` | 镜像 tag 由它派生，改一处全跟上 |
-| CHANGELOG.md | `## [x.y.z]` | 每个版本记了什么 |
-| git tag | `v1.0.0` | 触发自动构建 |
-
-### 怎么发新版本
+查看引擎日志：
 
 ```bash
-# 1. 改代码，把变更写进 CHANGELOG.md 的 [Unreleased] 小节
-
-# 2. 递增版本号（patch 修 bug / minor 加功能 / major 不兼容变更）
-./scripts/version.sh bump patch          # 改文件 + commit + 打 tag，不自动 push
-./scripts/version.sh bump minor --push   # 同上，完成后直接 push（触发自动构建）
-
-# 3.（可选）校验各处版本号是否一致
-./scripts/version.sh check
-
-# 4.（可选）只看当前版本
-./scripts/version.sh
+docker compose logs -f go-music-dl
 ```
-
-`bump` 执行后会自动：改 `__version__` → 同步 Dockerfile / .env → 写 CHANGELOG → `git commit` → `git tag`。
-`--push` 会连提交带 tag 一起推，GitHub Actions 收到 `v*` tag 后自动构建 amd64/arm64 镜像并推到 Docker Hub。
-
-### 镜像 tag 规则
-
-| tag | 含义 |
-|---|---|
-| `baey666/music-monitor:v1.0.0` | 精确版本，可回滚 |
-| `baey666/music-monitor:latest` | 最新发布，方便拉取 |
-
-想固定用某个版本，在 `.env` 里设 `APP_VERSION=1.0.0` 即可；想回滚就改成旧版本号再 `pull`。
-
----
 
 ## 常用操作
 
 ```bash
+# 查看容器状态
+docker compose ps
+
 # 查看日志
 docker compose logs -f monitor go-music-dl
 
-# 只重启监控服务（改完配置后）
-docker compose up -d --build monitor
+# 重启监控服务
+docker compose restart monitor
 
-# 停掉
+# 停止服务
 docker compose down
 
-# 备份全部配置与设置（几 MB，推荐）
-tar czf config-backup-$(date +%F).tar.gz config/
+# 更新远程镜像
+docker compose pull
+docker compose up -d
 
-# 只备份监控配置与记录
-cp config/monitor/monitor.db ~/monitor-backup.db
-
-# 改了代码后重新构建并启动
-docker compose up -d --build monitor
-
-# 发新版本（改版本号 + commit + tag，--push 触发自动构建）
-./scripts/version.sh bump patch --push
-
-# 查看正在跑的版本（容器内）
-curl -s http://localhost:9090/api/health | grep version
+# 备份配置、Cookie 和监控记录
+tar czf config-backup.tar.gz config/
 ```
 
-配置与数据说明：
+## 注意事项
 
-| 路径 | 内容 | 删掉的后果 |
-|---|---|---|
-| `config/monitor/monitor.db` | 监控配置、曲目记录、运行历史 | 重置所有监控 |
-| `config/engine/settings.db` | 引擎设置（含下载目录、并发等） | 引擎设置回默认 |
-| `config/engine/cookies.json` | 各平台登录态 | **所有平台要重新扫码，音质会掉到最低** |
-| `data/downloads/` | 音乐文件 | 只丢文件，不影响配置（删监控也不影响它） |
-
-> 备份优先打包 `config/`——体积小、又含全部登录态；音乐文件按需另外同步即可。
-
----
-
-## 本地开发与测试
-
-不需要 Docker 也能跑测试：项目自带一个**假的 go-music-dl 引擎**，按上游真实的页面结构返回数据，
-因此可以离线验证「解析 → 择优 → 换源 → 下载 → 去重」全链路。
-
-```bash
-cd music-monitor
-python -m venv .venv
-.venv/Scripts/python.exe -m pip install -r monitor/requirements.txt   # Linux/macOS 用 .venv/bin/python
-cd monitor && ../.venv/Scripts/python.exe -m tests.smoke_test
-```
-
-期望输出 `通过 35 项，失败 0 项`。
-
-测试文件：
-- `monitor/tests/stub_engine.py` —— 假引擎（HTML 页面 + JSON 接口）
-- `monitor/tests/smoke_test.py` —— 端到端断言
-
-也可以只跑前端联调：
-
-```bash
-cd monitor
-../.venv/Scripts/python.exe -m uvicorn app.main:app --port 9090   # 需自行设置 ENGINE_URL 指向真实引擎
-```
-
----
-
-## 已知限制
-
-1. **榜单会失效**：平台改版后 ID/链接就可能变。用「校验」发现，用「自定义榜单」修。
-2. **无损依赖会员**：没有对应平台会员 Cookie，`lossless` 会自动降级为 MP3/M4A，界面会如实标注。
-3. **Apple Music 只能下 preview**：`music-lib` 的能力限制，完整音频需要额外的解密工具，本项目不做。
-4. **Spotify 不在支持列表里**：`music-lib` 没有 Spotify 适配器，粘链接也无法解析。
-5. **解析依赖 HTML 结构**：见上节说明，改版时改 `parser.py` 即可，逻辑层不受影响。
-6. **酷我 / 咪咕 / 千千 / Jamendo 的榜单接入不完整**：这些平台的歌单能力本身就不稳定。
-
----
-
-## 常见问题
-
-**Q：容器起来后 8085 打不开？**
-先看日志：`docker compose logs go-music-dl`。多半是 `data` 目录权限问题，执行 `chmod -R 777 data`。
-
-**Q：监控控制台显示「引擎不可用」？**
-docker-compose 里两个服务在同一个 network，`ENGINE_URL` 必须是 `http://music-dl:8080`（容器名:容器内端口），
-不是宿主机端口。
-
-**Q：为什么下载的是 128kbps 而不是无损？**
-引擎里该平台的 Cookie 没有会员，或者没登录。到 8085 的引擎页面扫码登录后，用「设置 → 代写平台 Cookie」确认，
-再对失败/降级的曲目点「重试」。
-
-**Q：会不会重复下载？**
-两层去重：监控服务按 `(平台, 歌曲ID)` 与「歌名+歌手指纹」去重；引擎自己还有持久化下载指纹去重
-（跨监控共享，不同监控命中同一首歌也不会重复落盘）。
-
-**Q：能多个人一起用吗？**
-可以，但要注意：曲目记录是全局的，两个监控抓同一首歌时后一个会被指纹去重跳过——这是刻意的设计。
-
-**Q：拉镜像很慢 / 连不上 Docker Hub？**
-国内直连 `registry-1.docker.io` 经常超时，给 Docker 配镜像加速器即可，
-具体地址与实测可用性见 **[docs/deploy.md](docs/deploy.md)** 的「国内网络注意事项」。
-
-**Q：想自己构建镜像并发布到仓库？**
-这属于**发布流程**，不在本仓库内（放在项目外的 `music-monitor-deploy/`），
-里面包含构建推送脚本、Docker Hub / 云厂商专项说明，以及 GitHub 代码发布指南。
-普通使用者用不到 —— 直接用已发布的镜像即可。
-
----
-
-## 免责声明
-
-本项目只是一个自动化编排层，不提供也不托管任何音乐内容。
-下载的音源来自第三方平台，请遵守各平台的服务条款与当地法律法规，
-仅用于个人学习与备份，**下载的内容请在 24 小时内删除**。
-因使用本工具产生的任何后果由使用者自行承担。
-
----
-
-## 许可证
-
-本项目（监控编排层，即 `monitor/` 与 `scripts/` 部分）以 **MIT License** 发布，详见 [LICENSE](LICENSE)。
-
-上游引擎 [guohuiyuan/go-music-dl](https://github.com/guohuiyuan/go-music-dl) 采用 **AGPL-3.0**。
-本项目**未修改、未链接**其代码，仅通过 HTTP 接口在同一 Docker 网络中调用，二者保持独立进程与独立镜像。
+- `config/engine/cookies.json` 包含平台登录状态，不要公开或提交到 Git
+- `config/` 和 `data/` 需要保持持久化，否则删除容器后会丢失设置和记录
+- SQLite 数据库必须挂载目录，不要只挂载单个 `.db` 文件
+- 容器内固定路径不要修改，只修改 Compose 左侧的宿主机路径
+- Apple Music 通常只能获取试听片段，不适合作为完整音乐来源
+- Spotify 不在当前支持范围内
