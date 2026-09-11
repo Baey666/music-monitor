@@ -68,7 +68,7 @@ def _as_candidate(song: dict[str, Any], *, primary: bool, score: float) -> dict[
 
 # 试听片段和现场录音经常能被搜索接口返回，但不应混入正式歌曲下载。
 _VERSION_MARKERS = re.compile(
-    r"(?:live|现场|演唱会|演唱會|跨年|音乐会|音樂會|演出|acoustic|demo|试听|試聽|片段|snippet|remix)",
+    r"(?:live|现场|演唱会|演唱會|跨年|音乐会|音樂會|演出|acoustic|demo|试听|試聽|片段|snippet|remix|dj|混音|加长版|加長版|伴奏|instrumental|广播剧|廣播劇|radio edit|sped up|slowed)",
     re.IGNORECASE,
 )
 
