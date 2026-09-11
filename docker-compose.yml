@@ -6,11 +6,12 @@
 #    monitor   本项目新增的监控编排服务（榜单抓取、增量比对、音质择优、定时调度、Web 控制台）
 #
 #  ── 三种用法 ───────────────────────────────────────────────────────────────
-#  1) 本地构建启动（最简单）： docker compose up -d --build
-#  2) 推送到镜像仓库后部署：  docker compose pull && docker compose up -d
-#     先在 .env 里把 MONITOR_IMAGE 改成你的仓库地址，并执行 scripts/build-push 脚本。
-#  3) 离线镜像包部署：        docker load -i music-monitor.tar 然后 up -d
+#  1) 拉现成镜像启动（最省事）： docker compose pull && docker compose up -d
+#     MONITOR_IMAGE 默认已指向项目发布的镜像。
+#  2) 自己改了代码就地构建：     docker compose up -d --build
+#  3) 离线镜像包部署：          docker load -i music-monitor.tar 然后 up -d --no-build
 #
+#  国内直连 Docker Hub 常超时，需要先配镜像加速，见 docs/deploy.md。
 #  启动后浏览器打开 monitor（默认 http://<NAS-IP>:9090）
 # ============================================================================
 
@@ -57,7 +58,7 @@ services:
   #   直接 docker compose up -d      → 本地有镜像就用本地，没有才去拉/构建
   # --------------------------------------------------------------------------
   monitor:
-    image: ${MONITOR_IMAGE:-music-monitor:latest}
+    image: ${MONITOR_IMAGE:-baey666/music-monitor:latest}
     build:
       context: ./monitor
       dockerfile: Dockerfile

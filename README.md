@@ -28,14 +28,10 @@ music-monitor/
 ├── LICENSE
 ├── docker-compose.yml      # 两个服务：引擎 + 监控
 ├── .env.example            # 端口 / 音质 / 并发 / 镜像地址 / 落盘路径
-├── docs/                   # 文档（按用途一分为三）
-│   ├── deploy.md           #   → 部署到 NAS
-│   ├── publish-image.md    #   → 把镜像发到 Docker Hub / 云厂商
-│   └── publish-github.md   #   → 把代码发到 GitHub
-├── scripts/                # 部署、构建与推送脚本
-│   ├── deploy-nas.sh       #   ★ NAS 上一键部署（拉现成镜像，幂等可重复跑）
-│   ├── build-push.sh       #   Linux / macOS / NAS 构建并推送镜像
-│   └── build-push.ps1      #   Windows PowerShell
+├── docs/                   # 文档
+│   └── deploy.md           #   → 部署到 NAS（三种方案怎么选）
+├── scripts/                # 脚本
+│   └── deploy-nas.sh       #   ★ NAS 上一键部署（拉现成镜像，幂等可重复跑）
 ├── config/                 # ★ 所有配置与设置（内容不入库，只留占位）
 │   ├── engine/             #   ← 引擎设置 settings.db + 登录态 cookies.json
 │   └── monitor/            #   ← 监控自己的 SQLite（监控配置、曲目记录）
@@ -233,19 +229,19 @@ docker compose logs -f monitor      # 看监控服务日志
 
 ---
 
-## 部署与发布
+## 部署
 
-三类内容分开放，各看各的文档：
+本仓库只放**项目本身**。把服务跑起来，看 **[docs/deploy.md](docs/deploy.md)** 就够
+（三种方案怎么选、国内网络注意事项、权限与备份都在里面）。
 
-| 你想做什么 | 看哪个文档 |
-|---|---|
-| 把服务跑起来（部署到 NAS） | **[docs/deploy.md](docs/deploy.md)** |
-| 把镜像发到 Docker Hub / 云厂商 / 私有仓库 | **[docs/publish-image.md](docs/publish-image.md)** |
-| 把代码发到 GitHub | **[docs/publish-github.md](docs/publish-github.md)** |
+**一句话版本**：镜像已经发布在 Docker Hub（`baey666/music-monitor:latest`），
+NAS 上 `git clone` 本仓库后执行 `./scripts/deploy-nas.sh` 即可；
+不想用脚本就 `docker compose pull && docker compose up -d`。
+引擎用官方镜像 `guohuiyuan/go-music-dl`，不需要构建。
+如果你自己改了代码，`docker compose up -d --build` 会在本机重新构建。
 
-**一句话版本**：只有 `monitor` 一个镜像需要你自己构建，引擎直接用官方镜像
-`guohuiyuan/go-music-dl`（不用构建、不用上传）。最省事的做法是把整个目录拷到 NAS 后执行
-`docker compose up -d --build` —— 不需要镜像仓库，也不会有 CPU 架构不匹配的问题。
+> **给原作者**：构建并推送镜像、把代码发 GitHub 这类**发布流程**资料不在本仓库里
+> （放在项目外的 `music-monitor-deploy/`），避免和项目内容混在一起。
 
 ---
 
@@ -359,11 +355,8 @@ tar czf config-backup-$(date +%F).tar.gz config/
 # 只备份监控配置与记录
 cp config/monitor/monitor.db ~/monitor-backup.db
 
-# 登录镜像仓库（默认 Docker Hub，密码填 Access Token）
-./scripts/build-push.sh login
-
-# 构建并推送镜像（多架构）
-./scripts/build-push.sh push
+# 改了代码后重新构建并启动
+docker compose up -d --build monitor
 ```
 
 配置与数据说明：
@@ -437,10 +430,14 @@ docker-compose 里两个服务在同一个 network，`ENGINE_URL` 必须是 `htt
 **Q：能多个人一起用吗？**
 可以，但要注意：曲目记录是全局的，两个监控抓同一首歌时后一个会被指纹去重跳过——这是刻意的设计。
 
-**Q：`docker login` 的相关问题（密码不回显 / 要填 Access Token / `error storing credentials`）？**
-镜像登录与推送的问题统一放在
-**[docs/publish-image.md 的常见问题](docs/publish-image.md#7-常见问题)**。
-`git push` 的问题放在 **[docs/publish-github.md 的常见问题](docs/publish-github.md#6-常见问题)**。
+**Q：拉镜像很慢 / 连不上 Docker Hub？**
+国内直连 `registry-1.docker.io` 经常超时，给 Docker 配镜像加速器即可，
+具体地址与实测可用性见 **[docs/deploy.md](docs/deploy.md)** 的「国内网络注意事项」。
+
+**Q：想自己构建镜像并发布到仓库？**
+这属于**发布流程**，不在本仓库内（放在项目外的 `music-monitor-deploy/`），
+里面包含构建推送脚本、Docker Hub / 云厂商专项说明，以及 GitHub 代码发布指南。
+普通使用者用不到 —— 直接用已发布的镜像即可。
 
 ---
 

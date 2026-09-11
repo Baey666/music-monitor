@@ -1,11 +1,13 @@
 # 部署到 NAS
 
 > 这是 [music-monitor](https://github.com/Baey666/music-monitor) 的部署文档。
-> 镜像怎么构建、怎么推仓库，见 [publish-image.md](publish-image.md)。
-> 代码怎么发到 GitHub，见 [publish-github.md](publish-github.md)。
+>
+> 本仓库只放**项目本身**。「怎么把镜像推仓库 / 怎么把代码发 GitHub」属于发布流程，
+> 不在仓库内 —— 如果你是原作者，那些资料在项目外的 `music-monitor-deploy/` 里。
+> 普通使用者用不到它们：镜像已经发布在 Docker Hub，直接按下面的**方案 B** 拉取即可。
 
-**先明确一点**：只有 `monitor` 这一个镜像需要你自己构建。
-引擎用的是官方镜像 `guohuiyuan/go-music-dl`，不需要你构建，也不需要你上传。
+**先明确一点**：只有 `monitor` 这一个镜像需要构建。
+引擎用的是官方镜像 `guohuiyuan/go-music-dl`，官方已经在 Docker Hub 上，不需要你构建。
 
 ---
 
@@ -40,17 +42,18 @@ docker compose logs -f monitor
 - 前置：NAS 能访问外网（拉 `python:3.12-slim` 基础镜像 + pip 装依赖）。
   国内网络建议先给 Docker 配镜像加速器（见下方[国内网络注意事项](#国内网络注意事项)）。
 
-也可以直接用脚本一条命令搞定（等价于上面的步骤 2）：
+也可以一行命令搞定（等价于上面的步骤 2）：
 
 ```bash
-./scripts/build-push.sh local
+docker compose build && docker compose up -d
 ```
 
 ---
 
 ## 方案 B：构建镜像推到仓库，NAS 只拉镜像
 
-完整步骤（含 Docker Hub 专项、云厂商地址、限流与加速）见 **[publish-image.md](publish-image.md)**。
+完整步骤（Docker Hub 专项、云厂商地址、限流与加速）属于**发布流程**，不在本仓库内。
+普通使用者不需要它 —— 镜像已经发布好，直接拉取即可。
 
 > **一键脚本**（推荐，幂等，可重复执行）：本仓库已推送到 Docker Hub 的镜像地址是
 > `baey666/music-monitor:latest`。在 NAS 上 `git clone` 本仓库后直接执行：
@@ -108,14 +111,18 @@ docker compose up -d
 ## 方案 C：NAS 完全不能上网 → 导出镜像文件离线导入
 
 ```bash
-# 在能上网的机器上：构建 + 导出（脚本自带 save 子命令）
-./scripts/build-push.sh save            # 生成 music-monitor.tar
+# 1) 在能上网的机器上：把两个镜像都拉下来再导出
+docker pull baey666/music-monitor:latest
+docker save baey666/music-monitor:latest -o music-monitor.tar
 
 # 引擎镜像也要一起导出，否则 NAS 上拉不到
 docker pull guohuiyuan/go-music-dl:latest
 docker save guohuiyuan/go-music-dl:latest -o go-music-dl.tar
 
-# 把两个 tar 和 docker-compose.yml / .env 拷到 NAS
+# （可选）自己改了代码想用本地构建的版本，就换成：
+#   docker compose build monitor && docker save music-monitor:latest -o music-monitor.tar
+
+# 2) 把两个 tar 和 docker-compose.yml / .env 拷到 NAS
 docker load -i go-music-dl.tar
 docker load -i music-monitor.tar
 docker compose up -d --no-build         # --no-build 确保只用导入的镜像
@@ -198,8 +205,8 @@ docker info | grep -A 4 "Registry Mirrors"
 > 飞牛 / 群晖也可以直接在 Docker 应用的设置界面里改，效果一样。
 
 ⚠️ 加速器只代理**拉取 docker.io 的公共镜像**：它**不加速 `docker push`**，也不代理私有仓库。
-所以国内网络下"推镜像到 Docker Hub"通常仍然不通 —— 要推仓库建议改用
-国内的阿里云 ACR / 腾讯云 TCR，见 [publish-image.md](publish-image.md)。
+普通使用者不需要关心推送 —— 镜像已经在 Docker Hub 上，配好加速器直接拉即可。
+（原作者要更新镜像的话，发布流程资料在项目外的 `music-monitor-deploy/` 里。）
 
 ### ②③ 构建期源加速（管「容器内的 apt / pip」）
 
