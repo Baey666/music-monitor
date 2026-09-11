@@ -39,6 +39,25 @@ jobs:
       - name: 检出代码
         uses: actions/checkout@v4
 
+      # 提前拦一道：Secret 没配 / 配错标签页时，直接给出中文原因，
+      # 否则 login-action 只会丢一句 "Username and password required"，很难排查。
+      - name: 检查 Docker Hub Secret 是否就位
+        env:
+          DH_USER: ${{ secrets.DOCKERHUB_USERNAME }}
+          DH_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+        run: |
+          missing=""
+          [ -z "$DH_USER" ]  && missing="$missing DOCKERHUB_USERNAME"
+          [ -z "$DH_TOKEN" ] && missing="$missing DOCKERHUB_TOKEN"
+          if [ -n "$missing" ]; then
+            echo "::error::缺少 Secret:$missing"
+            echo "请检查是否加在【Settings → Secrets and variables → Actions】标签页。"
+            echo "常见错误：加到了相邻的 Dependabot 或 Environments 标签页 —— 那两个位置 workflow 读不到。"
+            echo "另外确认名字拼写为 DOCKERHUB_USERNAME / DOCKERHUB_TOKEN（下划线、全大写），且是 Repository secret 而非 Variable。"
+            exit 1
+          fi
+          echo "Secret 已就位：DOCKERHUB_USERNAME 长度 ${#DH_USER}，DOCKERHUB_TOKEN 长度 ${#DH_TOKEN}"
+
       - name: 安装 QEMU（多架构构建用）
         uses: docker/setup-qemu-action@v3
 

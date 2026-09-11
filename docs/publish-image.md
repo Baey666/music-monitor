@@ -173,6 +173,15 @@ https://hub.docker.com/settings/security → New Access Token → 权限 **Read 
 | `DOCKERHUB_USERNAME` | 你的 **Docker ID**（不是邮箱、不是昵称） |
 | `DOCKERHUB_TOKEN` | 上一步复制的 Access Token |
 
+> ⚠️ **最容易踩的坑**：`Secrets and variables` 下面有三个子项 —— **Actions**、**Codespaces**、
+> **Dependabot**，它们并排显示、长得很像。**只有加在 `Actions` 里 workflow 才读得到**。
+> 加到 Dependabot 或 Codespaces 里，Actions 跑起来会报
+> `##[error]Username and password required`，但这个报错完全不提"位置错了"，
+> 非常难排查。workflow 里已经加了一道前置检查，遇到这种情况会直接打印中文提示。
+>
+> 另外要确认加的是 **Secret** 而不是 **Variable**（两个是不同标签页），
+> 名字必须是 `DOCKERHUB_USERNAME` / `DOCKERHUB_TOKEN`（下划线、全大写）。
+
 **第三步：触发构建**
 
 - push 到 `main` 分支 → 自动构建，推 `:latest` 和 `:sha-xxxxxxx`
