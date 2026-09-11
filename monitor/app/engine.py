@@ -252,9 +252,18 @@ class Engine:
             body = r.text[:300]
             raise EngineError(f"下载失败 HTTP {r.status_code}: {body}")
         try:
-            return r.json()
+            data = r.json()
         except ValueError:
-            return {"status": "ok", "saved": True, "path": "", "filename": ""}
+            raise EngineError("下载接口返回非 JSON，无法确认是否已保存") from None
+        if not isinstance(data, dict):
+            raise EngineError("下载接口返回格式异常，无法确认是否已保存")
+        if data.get("status") not in {"ok", "success", "downloaded"} and not data.get("saved"):
+            detail = data.get("error") or data.get("message") or data.get("warning") or "上游未确认保存"
+            raise EngineError(f"上游下载未成功：{detail}")
+        if data.get("saved") is False:
+            detail = data.get("error") or data.get("message") or data.get("warning") or "上游未保存文件"
+            raise EngineError(f"上游下载未成功：{detail}")
+        return data
 
     # ------------------------------------------------------------------ 可选：引擎登录
     async def login(self, username: str, password: str) -> dict[str, Any]:

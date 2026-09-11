@@ -45,7 +45,8 @@ services:
       - ENGINE_URL=http://music-dl:8080
       - ENGINE_PREFIX=${ENGINE_PREFIX:-/music}
       - TICK_SECONDS=${TICK_SECONDS:-60}
-      - DOWNLOAD_CONCURRENCY=${DOWNLOAD_CONCURRENCY:-3}
+      - DOWNLOAD_CONCURRENCY=${DOWNLOAD_CONCURRENCY:-1}
+      - DOWNLOAD_RETRIES=${DOWNLOAD_RETRIES:-2}
       - DEFAULT_QUALITY=${DEFAULT_QUALITY:-lossless}
       - TZ=${TZ:-Asia/Shanghai}
     depends_on:

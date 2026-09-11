@@ -20,7 +20,9 @@ class Settings:
 
         # 调度
         self.tick_seconds: int = max(10, _int("TICK_SECONDS", 60))
-        self.download_concurrency: int = max(1, _int("DOWNLOAD_CONCURRENCY", 3))
+        # 下载默认串行，避免上游同时提交整批任务；需要更快时可用环境变量调大。
+        self.download_concurrency: int = max(1, _int("DOWNLOAD_CONCURRENCY", 1))
+        self.download_retries: int = max(0, _int("DOWNLOAD_RETRIES", 2))
         self.default_quality: str = os.getenv("DEFAULT_QUALITY", "lossless").strip().lower()
 
         # 配置库所在目录（**容器内路径**）。

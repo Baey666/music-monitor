@@ -338,6 +338,8 @@ async def run_monitor(db: Database, engine: Engine, mon: dict[str, Any]) -> dict
                 async with lock:
                     if budget <= 0:
                         return
+                    # 先预留名额，再离开锁；避免并发任务同时通过检查。
+                    budget -= 1
                 head = f"[{song.get('_origin', '')}] {song.get('name', '')} - {song.get('artist', '')}"
                 local_log: list[str] = [f"- {head}"]
                 try:
@@ -354,7 +356,20 @@ async def run_monitor(db: Database, engine: Engine, mon: dict[str, Any]) -> dict
                         local_log.append("  → 仅记录（未开启自动下载）")
                         return
 
-                    result = await engine.download(cand, embed=bool(mon.get("embed")))
+                    result = None
+                    last_error = ""
+                    for attempt in range(settings.download_retries + 1):
+                        try:
+                            result = await engine.download(cand, embed=bool(mon.get("embed")))
+                            break
+                        except Exception as exc:  # noqa: BLE001
+                            last_error = str(exc)
+                            if attempt < settings.download_retries:
+                                local_log.append(f"  ! 下载失败，第 {attempt + 1} 次重试：{last_error}")
+                                await asyncio.sleep(min(2 * (attempt + 1), 5))
+                    if result is None:
+                        raise EngineError(last_error or "下载失败，未收到上游确认")
+
                     file_path = result.get("path") or result.get("filename") or ""
                     engine_skipped = bool(result.get("skipped"))
                     db.upsert_track(
@@ -367,14 +382,13 @@ async def run_monitor(db: Database, engine: Engine, mon: dict[str, Any]) -> dict
                     )
                     async with lock:
                         downloaded += 1
-                        budget -= 1
                     local_log.append(f"  → 下载完成 {q.actual_quality_desc(ev)} {file_path}")
 
                 except Exception as exc:  # noqa: BLE001
                     async with lock:
                         failed += 1
                     db.upsert_track(mon["id"], song, status="failed", error=str(exc)[:400])
-                    local_log.append(f"  × 失败：{exc}")
+                    local_log.append(f"  × 失败（已重试 {settings.download_retries} 次）：{exc}")
                 finally:
                     async with lock:
                         log_lines.extend(local_log)
