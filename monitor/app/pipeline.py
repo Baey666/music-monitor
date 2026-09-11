@@ -73,11 +73,29 @@ _VERSION_MARKERS = re.compile(
 )
 
 
-def _reject_candidate(candidate: dict[str, Any], reference_duration: int = 0) -> str:
-    """返回淘汰原因；空字符串表示候选可继续探测。"""
-    text = " ".join(str(candidate.get(k) or "") for k in ("name", "album"))
-    if _VERSION_MARKERS.search(text):
-        return "标题或专辑标记为现场/演唱会/试听/混音版本"
+def _candidate_text(candidate: dict[str, Any]) -> str:
+    return " ".join(str(candidate.get(k) or "") for k in ("name", "album"))
+
+
+def _is_variant(candidate: dict[str, Any]) -> bool:
+    return bool(_VERSION_MARKERS.search(_candidate_text(candidate)))
+
+
+def _is_preview(candidate: dict[str, Any]) -> bool:
+    text = _candidate_text(candidate)
+    return bool(re.search(r"(?:demo|试听|試聽|片段|snippet)", text, re.IGNORECASE)) or (
+        0 < int(candidate.get("duration") or 0) <= 75
+    )
+
+
+def _reject_candidate(
+    candidate: dict[str, Any], reference_duration: int = 0, *, allow_variant: bool = True
+) -> str:
+    """返回原因；正式版优先，改编版只能由调用方作为兜底。"""
+    if _is_preview(candidate):
+        return "疑似试听片段"
+    if _is_variant(candidate) and not allow_variant:
+        return "改编版本仅允许作为正式版不可用时的兜底"
 
     duration = int(candidate.get("duration") or 0)
     reference = int(reference_duration or 0)
@@ -188,45 +206,34 @@ async def _pick_best(
     """返回 (选中的候选, 评估结果)。评估结果里记录了实际码率/格式。"""
     primary = _as_candidate(song, primary=True, score=1.0)
     reference_duration = primary["duration"]
-    primary_rejection = _reject_candidate(primary, reference_duration)
-    if primary_rejection:
-        log_lines.append(f"  原始源 {primary['source']} 跳过：{primary_rejection}")
-        primary_eval = {"valid": False, "satisfies": False, "bitrate": "-", "size": "", "kbps": None}
-    else:
-        primary_eval = q.evaluate(quality, await engine.inspect(primary))
-        log_lines.append(
-            f"  原始源 {primary['source']} 探测：{'有效' if primary_eval['valid'] else '无效'} "
-            f"{primary_eval['bitrate']} {primary_eval['size']}"
-        )
-    if primary_eval["satisfies"]:
-        return primary, primary_eval
+    formal: list[tuple[dict[str, Any], dict[str, Any]]] = []
+    variants: list[tuple[dict[str, Any], dict[str, Any]]] = []
 
-    candidates: list[tuple[dict[str, Any], dict[str, Any]]] = []
-    if not primary_rejection:
-        candidates.append((primary, primary_eval))
+    async def probe(cand: dict[str, Any], label: str) -> None:
+        rejection = _reject_candidate(cand, reference_duration, allow_variant=True)
+        if rejection and not _is_variant(cand):
+            log_lines.append(f"  {label}跳过：{rejection}")
+            return
+        ev = q.evaluate(quality, await engine.inspect(cand))
+        log_lines.append(f"  {label}{'有效' if ev['valid'] else '无效'} {ev['bitrate']} {ev['size']}")
+        if not ev["valid"]:
+            return
+        (variants if _is_variant(cand) else formal).append((cand, ev))
 
-    # 1) 让引擎在其它平台找最接近的可用版本（自带相似度 + 时长 + 可播放校验）
+    await probe(primary, f"原始源 {primary['source']} 探测：")
+
     try:
         alt = await engine.switch_source(
-            song.get("name", ""), song.get("artist", ""), song.get("source", ""), duration=int(song.get("duration") or 0)
+            song.get("name", ""), song.get("artist", ""), song.get("source", ""), duration=reference_duration
         )
     except Exception as exc:  # noqa: BLE001
         log.debug("switch_source 异常: %s", exc)
         alt = None
-    if alt and alt.get("id") and alt.get("source") and alt.get("source") != primary["source"]:
+    if alt and alt.get("id") and alt.get("source") != primary["source"]:
         cand = _as_candidate(alt, primary=False, score=float(alt.get("score") or 0.0))
-        rejection = _reject_candidate(cand, reference_duration)
-        if rejection:
-            log_lines.append(f"  换源候选 {cand['source']} 跳过：{rejection}")
-        elif cand["similarity"] >= 0.75:
-            ev = q.evaluate(quality, await engine.inspect(cand))
-            log_lines.append(f"  换源候选 {cand['source']} 相似度{cand['similarity']}：{ev['bitrate']} {ev['size']}")
-            if ev["valid"]:
-                candidates.append((cand, ev))
-                if ev["satisfies"]:
-                    return cand, ev
+        if cand["similarity"] >= 0.75:
+            await probe(cand, f"换源候选 {cand['source']} 相似度{cand['similarity']}：")
 
-    # 2) 仍然不达标：在允许的平台里搜索同名曲目，逐个探测
     wanted = [s for s in (sources or []) if s and s != primary["source"]]
     if wanted:
         queried = f"{song.get('name', '')} {song.get('artist', '')}".strip()
@@ -235,46 +242,28 @@ async def _pick_best(
         except Exception as exc:  # noqa: BLE001
             log.warning("跨平台搜索失败 %s: %s", queried, exc)
             found = []
-
-        ranked: list[tuple[float, dict[str, Any]]] = []
-        for f in found:
-            score = similarity(song.get("name", ""), song.get("artist", ""), f.get("name", ""), f.get("artist", ""))
-            if score >= 0.72:
-                ranked.append((score, f))
-        ranked.sort(key=lambda x: (-x[0], q.source_rank(x[1].get("source", ""))))
-
-        seen_src: set[str] = {c["source"] for c, _ in candidates}
-        checked = 0
+        ranked = sorted(
+            ((similarity(song.get("name", ""), song.get("artist", ""), f.get("name", ""), f.get("artist", "")), f) for f in found),
+            key=lambda x: (-x[0], q.source_rank(x[1].get("source", ""))),
+        )
+        seen = {c["source"] for c, _ in formal + variants}
         for score, f in ranked:
-            if checked >= 4:
-                break
+            if score < 0.72 or len(seen) >= 5:
+                continue
             src = f.get("source", "")
-            if src in seen_src:
+            if src in seen:
                 continue
             cand = _as_candidate(f, primary=False, score=score)
-            rejection = _reject_candidate(cand, reference_duration)
-            if rejection:
-                log_lines.append(f"  搜索候选 {src} 跳过：{rejection}")
-                continue
-            ev = q.evaluate(quality, await engine.inspect(cand))
-            checked += 1
-            log_lines.append(f"  搜索候选 {src} 相似度{score}：{ev['bitrate']} {ev['size']}")
-            if ev["valid"]:
-                seen_src.add(src)
-                candidates.append((cand, ev))
-                if ev["satisfies"]:
-                    return cand, ev
+            await probe(cand, f"搜索候选 {src} 相似度{score}：")
+            seen.add(src)
 
-    # 3) 没有任何候选达标
-    valid_only = [(c, e) for c, e in candidates if e["valid"]]
-    if not valid_only:
+    # 正式版永远优先；改编版只在没有任何正式版可用时兜底。
+    valid = formal or variants
+    if not valid:
         return None, None
-    # 挑实际码率最高的一个，交给上层按 fallback 策略决定用不用
-    best_cand, best_eval = max(
-        valid_only,
-        key=lambda ce: (ce[1]["kbps"] or 0, 0 if ce[0]["is_primary"] else 1, -q.source_rank(ce[0]["source"])),
-    )
-    return best_cand, best_eval
+    satisfying = [item for item in valid if item[1]["satisfies"]]
+    pool = satisfying or valid
+    return max(pool, key=lambda ce: (ce[1]["kbps"] or 0, 0 if ce[0]["is_primary"] else 1, -q.source_rank(ce[0]["source"])))
 
 
 # --------------------------------------------------------------------------- 主流程
