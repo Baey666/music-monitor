@@ -113,13 +113,13 @@ add_changelog_entry() {
     return 0
   fi
   tmp="$ROOT/.changelog.tmp.$$"
-  trap 'rm -f "$tmp"' EXIT
   if grep -q '^## \[Unreleased\]' "$CHANGELOG"; then
     awk -v ver="$v" -v date="$date" '
       { print }
       /^## \[Unreleased\]/ && !done { print ""; print "## [" ver "] - " date; done=1 }
     ' "$CHANGELOG" > "$tmp"
     mv "$tmp" "$CHANGELOG"
+    rm -f "$tmp"
     ok "CHANGELOG.md    新增小节 ## [$v] - $date"
   else
     warn "$CHANGELOG 里没有 ## [Unreleased] 小节，未自动插入版本记录"
