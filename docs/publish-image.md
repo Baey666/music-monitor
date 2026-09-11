@@ -200,7 +200,59 @@ MONITOR_IMAGE=你的DockerID/music-monitor:latest
 > 用了 GitHub Actions 自己的缓存，第二次构建不用重下 pip 包，快很多，不占 Docker Hub 的存储。
 
 **检查结果**：Actions 页里那次 run 变绿后，去 https://hub.docker.com/r/你的DockerID/music-monitor/tags
-看有没有新 tag。失败的话点进 run 看日志，常见原因是 Secret 名字拼错或 Token 权限选了只读。
+看有没有新 tag。
+
+### 4.7 推送失败怎么查
+
+工作流 run 失败时，**按这个顺序查，别瞎试**：
+
+**① 先核对时间戳**——判断是不是"旧值"造成的：
+
+```bash
+gh api repos/<owner>/<repo>/actions/secrets --jq '.secrets[] | "\(.name) \(.updated_at)"'
+gh run list --repo <owner>/<repo> --limit 5
+```
+
+**失败 run 的时间如果早于 `updated_at`，说明你是在它跑完之后才改对的，直接重跑即可**，
+不用怀疑账号密码。这个坑极常见。
+
+**② 确认 Secret 存到了正确的作用域**——Secret 值读不出来，但名字和作用域能列出来：
+
+```bash
+gh api repos/<owner>/<repo>/actions/secrets    --jq '.total_count'   # 应为 2
+gh api repos/<owner>/<repo>/actions/variables  --jq '.total_count'   # 应为 0
+gh api repos/<owner>/<repo>/dependabot/secrets --jq '.total_count'   # 若为 2 而上面是 0 → 位置错了
+```
+
+**③ 验证凭据本身**——手动触发仓库里的 **Diagnose Docker Hub credentials** 工作流
+（`.github/workflows/dockerhub-diagnose.yml`，只诊断不推送）。它会依次检查：
+
+| 检查项 | 结果含义 |
+|---|---|
+| Token 长度 / 前 9 位 | 应为 36 字符、前缀固定 `dckr_pat_`；不是则复制错了对象 |
+| `GET /v2/users/<名字>/` | 200=用户存在；404=用户名填错 |
+| `POST /v2/users/login` | 200=凭据有效；401=Token 已过期/被撤销/复制截断 |
+| `GET auth.docker.io/token` | 200=可用于 registry 推送与拉取 |
+
+> ⚠️ **GitHub 会把 Secret 的值在日志里全局脱敏成 `***`**，所以日志里看不到用户名内容。
+> 这是正常的——请靠长度、前缀和上面几个 HTTP 状态码判断，不要去打印 Secret 内容。
+
+**④ 验证镜像真的推上去了**（国内也能查，不必等 `docker pull`）：
+
+```bash
+# 标签列表，免鉴权
+curl -s "https://docker.1ms.run/v2/你的DockerID/music-monitor/tags/list"
+# → {"name":"你的DockerID/music-monitor","tags":["latest","sha-xxxxxxx"]}
+
+# 多架构 manifest（确认 amd64 / arm64 都在）
+TOK=$(curl -s "https://docker.1ms.run/openapi/v1/auth/token?service=docker.1ms.run&scope=repository:你的DockerID/music-monitor:pull" | python -c "import sys,json;print(json.load(sys.stdin)['token'])")
+curl -s -H "Authorization: Bearer $TOK" -H "Accept: application/vnd.oci.image.index.v1+json" \
+  "https://docker.1ms.run/v2/你的DockerID/music-monitor/manifests/latest"
+```
+
+> 注意 `1ms.run` 的鉴权端点是自己那套 `https://docker.1ms.run/openapi/v1/auth/token`，
+> 不是标准的 `auth.docker.io`，写死后者会 401。拿不准就先看响应头：
+> `curl -D - -o /dev/null <manifest 地址> | grep -i www-authenticate`
 
 ---
 
