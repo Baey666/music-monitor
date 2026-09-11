@@ -149,6 +149,50 @@ sudo systemctl restart docker
 
 > 加速器只代理**拉取** `docker.io` 的公共镜像，不加速 `push`，也不代理 private 仓库。
 
+### 4.6 本机推不上去？交给 GitHub Actions 代推
+
+有些网络环境下 `registry-1.docker.io`、`auth.docker.io`、`hub.docker.com` **全部超时**，
+`docker login` 直接卡住，`docker push` 更不可能成功。
+注意：加速器只代理拉取，**换多少个加速器都解决不了推送**。
+
+这种情况最省事的办法是让 GitHub 的 runner 帮你推——runner 在境外，没有被墙的问题。
+
+仓库里已经放好了现成的 workflow：**`.github/workflows/docker-publish.yml`**，
+推代码到 GitHub 后会自动跑。你只需要补两样东西：
+
+**第一步：生成 Docker Hub Access Token**
+
+https://hub.docker.com/settings/security → New Access Token → 权限 **Read & Write** → 复制。
+
+**第二步：在 GitHub 仓库里填两个 Secret**
+
+仓库页 → **Settings → Secrets and variables → Actions → New repository secret**：
+
+| Secret 名称 | 填什么 |
+|---|---|
+| `DOCKERHUB_USERNAME` | 你的 **Docker ID**（不是邮箱、不是昵称） |
+| `DOCKERHUB_TOKEN` | 上一步复制的 Access Token |
+
+**第三步：触发构建**
+
+- push 到 `main` 分支 → 自动构建，推 `:latest` 和 `:sha-xxxxxxx`
+- 推 `v1.2.3` 形式的 tag → 额外推 `:1.2.3` 和 `:1.2`
+- 也可以去仓库的 **Actions** 页点 **Run workflow** 手动触发
+
+构建好的镜像地址就是：
+
+```ini
+MONITOR_IMAGE=你的DockerID/music-monitor:latest
+```
+
+它同时构建 `linux/amd64` 和 `linux/arm64`，x86 与 ARM 的 NAS 都能直接拉。
+
+> 为什么 workflow 里写了 `cache-from: type=gha`：
+> 用了 GitHub Actions 自己的缓存，第二次构建不用重下 pip 包，快很多，不占 Docker Hub 的存储。
+
+**检查结果**：Actions 页里那次 run 变绿后，去 https://hub.docker.com/r/你的DockerID/music-monitor/tags
+看有没有新 tag。失败的话点进 run 看日志，常见原因是 Secret 名字拼错或 Token 权限选了只读。
+
 ---
 
 ## 5. 云厂商镜像服务要点

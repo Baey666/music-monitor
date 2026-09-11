@@ -69,6 +69,29 @@ docker compose up -d
 > `pull && up -d` 直接用远端镜像。想彻底禁止在 NAS 上构建，把 `monitor` 服务里的
 > `build:` 三行删掉即可（保留 `image:`）。
 
+### 在飞牛（fnOS）的 Docker 界面里下拉镜像
+
+飞牛自带的「Docker → 镜像 → 拉取」可以直接用，但要注意**地址写完整**：
+
+| 场景 | 拉取时填的地址 |
+|---|---|
+| 镜像在 Docker Hub，且 NAS 已配好加速器 | `你的DockerID/music-monitor:latest` |
+| 直连 Docker Hub 超时（国内常见） | `docker.1ms.run/你的DockerID/music-monitor:latest` |
+
+关于加速器，实测结论（2026-09 本机与 NAS 双端验证）：
+
+- `docker.1ms.run` —— **唯一能代理「用户命名空间」镜像的加速器**（返回 200，完整 token 流程可用）。
+  你自己的 `你的DockerID/xxx` 属于用户命名空间，必须用它或类似能完整透传的镜像站。
+- `docker.m.daocloud.io` —— 只代理官方库（`library/*`），拉用户镜像会返回 403。
+- `docker.xuanyuan.me` —— 不稳定，时通时断。
+- `docker.mirrors.ustc.edu.cn`、`hub-mirror.c.163.com` —— 已失效，别再配。
+
+加速器地址既可以写在飞牛的 **Docker 设置 → 镜像加速** 里（让它自动改写 `docker.io`），
+也可以像上表第二行那样**直接拼在镜像地址最前面**，后者更可控、不用改全局设置。
+
+> 引擎镜像 `guohuiyuan/go-music-dl:latest` 也是用户命名空间，同样需要走 `docker.1ms.run`。
+> 如果某个加速器能拉 `nginx` 却拉不了它，就是上面说的 403 问题，换 `docker.1ms.run` 即可。
+
 ---
 
 ## 方案 C：NAS 完全不能上网 → 导出镜像文件离线导入
