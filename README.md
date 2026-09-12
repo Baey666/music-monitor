@@ -98,36 +98,85 @@ docker compose logs -f
 
 ### 飞牛 NAS
 
-如果 Compose 文件放在飞牛的应用目录，例如：
+下面是一份适合飞牛 fnOS 的完整配置。它将配置文件保存在 Compose 项目目录，把音乐文件保存到机械硬盘，并让 monitor 以只读方式检查音乐文件是否仍然存在。
+
+在飞牛上创建目录，例如：
 
 ```text
 /vol1/docker/music-monitor/
 ```
 
-直接在该目录执行：
+在该目录创建 `docker-compose.yml`，直接复制以下内容：
+
+```yaml
+# 飞牛 fnOS 部署版
+
+services:
+  music-dl:
+    image: docker.1ms.run/guohuiyuan/go-music-dl:latest
+    container_name: go-music-dl
+    restart: unless-stopped
+    ports:
+      - "8085:8080"
+    volumes:
+      - ./config/engine:/home/appuser/data
+      - "/vol2/1000/机械硬盘/#media/downloads/Music:/home/appuser/data/downloads"
+    environment:
+      - TZ=Asia/Shanghai
+    user: "1000:1000"
+
+  monitor:
+    image: docker.1ms.run/baey666/music-monitor:v1.0.6
+    container_name: music-monitor
+    restart: unless-stopped
+    ports:
+      - "9099:9090"
+    volumes:
+      - ./config/monitor:/app/data
+      - "/vol2/1000/机械硬盘/#media/downloads/Music:/downloads:ro"
+    environment:
+      - ENGINE_URL=http://music-dl:8080
+      - ENGINE_PREFIX=/music
+      - TICK_SECONDS=60
+      - DOWNLOAD_CONCURRENCY=1
+      - DOWNLOAD_RETRIES=2
+      - DEFAULT_QUALITY=lossless
+      - TZ=Asia/Shanghai
+    depends_on:
+      - music-dl
+    user: "1000:1000"
+```
+
+注意：上面配置中的 `/vol2/1000/机械硬盘/#media/downloads/Music` 是示例路径，请改成飞牛上实际的音乐目录，并在两个服务的挂载项中保持一致。`monitor` 的 `:ro` 表示只读，不会修改或删除音乐文件。
+
+在 Compose 项目目录执行：
 
 ```bash
 cd /vol1/docker/music-monitor
-mkdir -p config/engine config/monitor data/downloads
-chmod -R 777 config data
+mkdir -p config/engine config/monitor
+chmod -R 777 config
 docker compose pull
-docker compose up -d
+docker compose up -d --force-recreate
+docker compose ps
 ```
 
-如果 Docker Hub 在当前网络不可直接访问，使用 Compose 文件中配置的镜像加速地址，或将 monitor 镜像地址改为：
+如果设备使用旧版 Compose 命令，把 `docker compose` 换成 `docker-compose`。
 
-```yaml
-image: docker.1ms.run/baey666/music-monitor:v1.0.4
+更新已经部署的服务时，执行：
+
+```bash
+docker compose pull monitor
+docker compose up -d --force-recreate monitor
 ```
 
-如果 `9090` 端口已被占用，把宿主机端口改为其他端口，例如：
+网页顶部显示的版本号应为 `v1.0.6`。如果 `9099` 端口已被占用，把左侧宿主机端口改为其他端口，例如：
 
 ```yaml
 ports:
   - "9091:9090"
 ```
 
-右侧的容器端口 `9090` 不要修改。修改后访问：
+右侧容器端口 `9090` 不要修改。修改后访问：
 
 ```text
 http://飞牛IP:9091
