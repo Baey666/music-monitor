@@ -126,7 +126,7 @@ services:
     user: "1000:1000"
 
   monitor:
-    image: docker.1ms.run/baey666/music-monitor:v1.0.6
+    image: docker.1ms.run/baey666/music-monitor:latest
     container_name: music-monitor
     restart: unless-stopped
     ports:
@@ -169,7 +169,7 @@ docker compose pull monitor
 docker compose up -d --force-recreate monitor
 ```
 
-网页顶部显示的版本号应为 `v1.0.6`。如果 `9099` 端口已被占用，把左侧宿主机端口改为其他端口，例如：
+网页顶部会显示当前实际运行的版本号。使用 `latest` 时，每次拉取后可在网页确认是否已更新。如果 `9099` 端口已被占用，把左侧宿主机端口改为其他端口，例如：
 
 ```yaml
 ports:
