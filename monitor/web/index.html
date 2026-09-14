@@ -229,6 +229,7 @@
           <option value="chart">热门榜单</option>
           <option value="playlist">指定歌单（链接）</option>
           <option value="favorites">个人收藏夹</option>
+          <option value="artist">歌手关注</option>
         </select>
       </label>
     </div>
@@ -251,6 +252,16 @@
     <div id="m-block-favorites" style="display:none">
       <label class="field"><span>要监控的个人歌单（留空 = 该平台下全部歌单/收藏夹）</span></label>
       <div id="m-fav-picker" class="muted small">先到「歌单 / 收藏夹」页面点「读取我的收藏」，这里会出现可勾选项。</div>
+    </div>
+
+    <!-- artist -->
+    <div id="m-block-artist" style="display:none">
+      <label class="field"><span>关注的歌手（每行一个，可写「歌手名|平台」，如「周杰伦」或「陈奕迅|qq」）</span>
+        <textarea id="m-artist-names" placeholder="周杰伦&#10;林俊杰&#10;陈奕迅|qq"></textarea></label>
+      <p class="hint">
+        歌手关注靠「按歌手名搜索 + 严格匹配歌手」实现（引擎按歌单/榜单取曲目，没有单独的歌手接口）。
+        搜索结果里混进来的翻唱、同名翻唱会被本地按歌手名过滤掉。新歌发布后会在下一轮检查时被自动发现并下载。
+      </p>
     </div>
 
     <label class="field"><span>参与平台（用于跨平台补源，勾选越多越容易拿到高音质）</span></label>

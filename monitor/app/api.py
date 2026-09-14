@@ -19,7 +19,7 @@ router = APIRouter(prefix="/api")
 # --------------------------------------------------------------------------- 模型
 class MonitorIn(BaseModel):
     name: str
-    kind: str = Field(pattern="^(chart|playlist|favorites)$")
+    kind: str = Field(pattern="^(chart|playlist|favorites|artist)$")
     enabled: bool = True
     sources: list[str] = Field(default_factory=list)
     target: dict[str, Any] = Field(default_factory=dict)

@@ -40,6 +40,25 @@ def similarity(name_a: str, artist_a: str, name_b: str, artist_b: str) -> float:
     return round(title * 0.7 + artist * 0.3, 4)
 
 
+def _artist_matches(song_artist: str, wanted: str, *, threshold: float = 0.72) -> bool:
+    """判断一首歌的歌手字段是否属于"我们要关注的这位歌手"。
+
+    搜索接口常把翻唱、同名曲、合作曲一起返回，所以这里按「包含」优先、
+    相似度兜底来判定；「周杰伦/杨瑞代」这类合作曲也算。"""
+    a = _norm(song_artist)
+    b = _norm(wanted)
+    if not a or not b:
+        return False
+    if a == b:
+        return True
+    # 「周杰伦/杨瑞代」「周杰伦、方文山」——歌手字段里含目标歌手即算
+    if b in a:
+        return True
+    if a in b:
+        return True
+    return difflib.SequenceMatcher(None, a, b).ratio() >= threshold
+
+
 def _keywords(raw: str) -> list[str]:
     return [k.strip().lower() for k in re.split(r"[,，;；\s]+", raw or "") if k.strip()]
 
@@ -194,6 +213,34 @@ async def discover(engine: Engine, mon: dict[str, Any]) -> tuple[list[dict[str, 
             for s in cur[: settings.max_songs_per_playlist]:
                 s["_origin"] = pl.get("name") or key
                 songs.append(s)
+    elif kind == "artist":
+        # 上游没有「按歌手取全部歌曲」的接口，只有搜索。所以歌手关注 =
+        # 用歌手名去搜，再用 exact_artist 让引擎严格匹配歌手，最后本地按歌手名复核一遍，
+        # 把搜索结果里混进来的同名翻唱/别人的歌滤掉。
+        artists = target.get("artists") or []
+        if not artists:
+            warnings.append("未配置任何关注的歌手")
+        page_size = int(target.get("page_size") or 100)
+        for item in artists:
+            name = str(item.get("name") or "").strip()
+            if not name:
+                continue
+            want_sources = item.get("sources") or sources
+            try:
+                cur = await engine.search_songs(name, want_sources, exact_artist=name, page_size=page_size)
+            except Exception as exc:  # noqa: BLE001
+                warnings.append(f"歌手「{name}」搜索失败：{exc}")
+                continue
+            kept = [s for s in cur if _artist_matches(s.get("artist", ""), name)]
+            if not kept:
+                warnings.append(f"歌手「{name}」没有搜到匹配的曲目（可能该平台未收录或需要登录 Cookie）")
+                continue
+            if len(kept) < len(cur):
+                warnings.append(f"歌手「{name}」搜索到 {len(cur)} 首，按歌手名过滤后保留 {len(kept)} 首")
+            for s in kept[: settings.max_songs_per_playlist]:
+                s["_origin"] = name
+                songs.append(s)
+
     else:
         warnings.append(f"未知的监控类型：{kind}")
 

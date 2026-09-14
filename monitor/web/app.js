@@ -189,7 +189,7 @@ const App = (() => {
     $('monitor-empty').style.display = items.length ? 'none' : 'block';
 
     $('monitor-list').innerHTML = items.map((m) => {
-      const kindLabel = { chart: '热门榜单', playlist: '指定歌单', favorites: '个人收藏夹' }[m.kind] || m.kind;
+      const kindLabel = { chart: '热门榜单', playlist: '指定歌单', favorites: '个人收藏夹', artist: '歌手关注' }[m.kind] || m.kind;
       const isRunning = running.has(m.id);
       const srcs = (m.sources || []).map((s) => `<span class="tag">${esc(sourceLabel(s))}</span>`).join('');
       let targetDesc = '';
@@ -199,6 +199,9 @@ const App = (() => {
       } else if (m.kind === 'playlist') {
         const names = (m.target.playlists || []).map((c) => c.name || c.link);
         targetDesc = names.length ? names.join('、') : '未配置歌单';
+      } else if (m.kind === 'artist') {
+        const names = (m.target.artists || []).map((c) => c.name || c.id).filter(Boolean);
+        targetDesc = names.length ? '关注：' + names.join('、') : '未配置歌手';
       } else {
         const ids = m.target.playlist_ids || [];
         targetDesc = ids.length ? '已选 ' + ids.length + ' 个收藏夹' : '该平台全部收藏夹';
@@ -644,6 +647,13 @@ const App = (() => {
     state.favSel = new Set(monitor && monitor.kind === 'favorites' ? (monitor.target.playlist_ids || []) : (preset?.playlist_ids || []));
     renderFavPicker();
 
+    // 歌手关注
+    const artists = monitor && monitor.kind === 'artist' ? (monitor.target.artists || []) :
+      (preset?.artists || []);
+    $('m-artist-names').value = artists
+      .map((a) => (a.name || '') + (a.sources && a.sources.length ? '|' + a.sources.join(',') : ''))
+      .join('\n');
+
     // 平台
     const sources = monitor ? monitor.sources : (preset?.sources || state.platforms.map((p) => p.key));
     state.sourcesSel = new Set(sources && sources.length ? sources : state.platforms.map((p) => p.key));
@@ -699,6 +709,7 @@ const App = (() => {
     $('m-block-chart').style.display = kind === 'chart' ? 'block' : 'none';
     $('m-block-playlist').style.display = kind === 'playlist' ? 'block' : 'none';
     $('m-block-favorites').style.display = kind === 'favorites' ? 'block' : 'none';
+    $('m-block-artist').style.display = kind === 'artist' ? 'block' : 'none';
     syncChip('m-enabled-chip', 'm-enabled');
     syncChip('m-auto-chip', 'm-auto');
     syncChip('m-embed-chip', 'm-embed');
@@ -733,6 +744,13 @@ const App = (() => {
         const [source, id] = x.link.split(':');
         return { name: x.name, source, id, link: '' };
       });
+    } else if (kind === 'artist') {
+      // 每行「歌手名」或「歌手名|平台1,平台2」；不指定平台就用监控级的平台列表。
+      target.artists = parseLinkLines($('m-artist-names').value).map((x) => {
+        const name = (x.name || x.link || '').trim();
+        const srcs = x.name ? (x.link || '').split(',').map((s) => s.trim()).filter(Boolean) : [];
+        return { name, sources: srcs };
+      }).filter((a) => a.name);
     } else {
       target.playlist_ids = [...state.favSel];
     }

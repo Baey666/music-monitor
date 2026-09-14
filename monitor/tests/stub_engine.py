@@ -33,6 +33,7 @@ INSPECT: dict[str, dict[str, Any]] = {
     "netease:s2": {"valid": True, "url": "https://cdn.example.com/s2.mp3", "size": "3.4 MB", "bitrate": "128 kbps"},
     "netease:s3": {"valid": True, "url": "https://cdn.example.com/s3.flac", "size": "28.0 MB", "bitrate": "921 kbps"},
     "netease:s4": {"valid": False, "url": "", "size": "", "bitrate": "-"},
+    "netease:s5": {"valid": True, "url": "https://cdn.example.com/s5.flac", "size": "26.4 MB", "bitrate": "905 kbps"},
     # 换源后拿到的 QQ 版本
     "qq:q2": {"valid": True, "url": "https://cdn.example.com/q2.flac", "size": "30.2 MB", "bitrate": "902 kbps"},
 }
@@ -40,6 +41,13 @@ INSPECT: dict[str, dict[str, Any]] = {
 SEARCH_INDEX: dict[str, list[dict[str, Any]]] = {
     "夜曲": [
         {"id": "q2", "source": "qq", "name": "夜曲", "artist": "周杰伦", "album": "十一月的萧邦", "duration": 228},
+    ],
+    # 歌手关注：按歌手名搜索。故意混入一首翻唱，用来验证按歌手名过滤的逻辑。
+    "周杰伦": [
+        {"id": "s1", "source": "netease", "name": "晴天", "artist": "周杰伦", "album": "叶惠美", "duration": 269},
+        {"id": "s2", "source": "netease", "name": "夜曲", "artist": "周杰伦", "album": "十一月的萧邦", "duration": 227},
+        {"id": "s3", "source": "netease", "name": "稻香", "artist": "周杰伦", "album": "魔杰座", "duration": 223},
+        {"id": "s5", "source": "netease", "name": "晴天（翻唱）", "artist": "某翻唱歌手", "album": "翻唱合辑", "duration": 250},
     ],
 }
 
@@ -103,7 +111,7 @@ async def index():
 
 
 @app.get("/music/search", response_class=PlainTextResponse)
-async def search(q: str = "", type: str = "song", sources: list[str] | None = None):
+async def search(q: str = "", type: str = "song", sources: list[str] | None = None, exact_artist: str = ""):
     if q.startswith("http"):
         # 链接解析：返回一张歌单卡片
         return _playlist_html({"name": "来自链接的歌单", "source": "netease", "id": "19723756",
@@ -112,6 +120,10 @@ async def search(q: str = "", type: str = "song", sources: list[str] | None = No
         return _playlist_html({"name": "热歌榜", "source": "netease", "id": "3778678", "track_count": 1,
                                "detail_url": "/music/playlist?id=3778678&source=netease"})
     songs = SEARCH_INDEX.get(q, [])
+    if exact_artist:
+        # 上游 exact_artist 的行为：按歌手名严格匹配。这里故意**只做前缀包含**，
+        # 让那首翻唱仍然漏出来，好让 pipeline 的本地区歌手名过滤有用武之地。
+        songs = [s for s in songs if exact_artist in (s.get("artist") or "") or (s.get("artist") or "") in exact_artist]
     return "".join(_song_html(s) for s in songs)
 
 

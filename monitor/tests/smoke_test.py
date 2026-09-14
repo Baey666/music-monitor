@@ -234,6 +234,76 @@ def main() -> int:
         check("监控干跑接口可用", r["total"] == 3, str(r.get("warnings")))
         c.delete(f"/api/monitors/{mid2}")
 
+        # ---------------- 16. 歌手关注 ----------------
+        print("\n[16] 歌手关注")
+        draft = {
+            "kind": "artist",
+            "sources": ["netease"],
+            "target": {"artists": [{"name": "周杰伦", "sources": []}]},
+            "include_kw": "",
+            "exclude_kw": "",
+        }
+        r = c.post("/api/preview", json=draft).json()
+        names = [s["artist"] for s in r["songs"]]
+        check("歌手搜索命中曲目", r["total"] >= 3, str(r.get("warnings")))
+        check("按歌手名过滤掉了翻唱", all("周杰伦" in n for n in names), str(names))
+        check("混入的翻唱已被剔除", "某翻唱歌手" not in " ".join(names), str(names))
+        check("曲目带歌手来源标记", all(s.get("origin") == "周杰伦" for s in r["songs"]), str(r["songs"][:1]))
+
+        artist_mon = {
+            "name": "关注周杰伦",
+            "kind": "artist",
+            "enabled": False,
+            "sources": ["netease"],
+            "target": {"artists": [{"name": "周杰伦", "sources": []}]},
+            "quality": "lossless",
+            "fallback": "best_effort",
+            "auto_download": True,
+            "embed": True,
+            "interval_minutes": 360,
+            "max_downloads": 10,
+            "include_kw": "",
+            "exclude_kw": "",
+        }
+        aid = c.post("/api/monitors", json=artist_mon).json()["id"]
+        check("歌手关注监控创建成功", isinstance(aid, int) and aid > 0)
+
+        before = len(stub_engine.DOWNLOADS)
+        c.post(f"/api/monitors/{aid}/run")
+        for _ in range(60):
+            time.sleep(0.5)
+            d = c.get(f"/api/monitors/{aid}").json()
+            if d["runs"] and d["runs"][0]["finished_at"]:
+                break
+        run = d["runs"][0] if d.get("runs") else {}
+        check("歌手关注任务执行完成", bool(run.get("finished_at")), str(run.get("status")))
+        check("只下载了周杰伦本人的 3 首", run.get("downloaded") == 3,
+              f"downloaded={run.get('downloaded')} log={run.get('log')}")
+        a_tracks = c.get("/api/tracks", params={"monitor_id": aid}).json()["items"]
+        a_ids = {t["song_id"] for t in a_tracks}
+        check("翻唱 s5 未进入曲库", "s5" not in a_ids, str(sorted(a_ids)))
+        check("歌手关注触发了下载", len(stub_engine.DOWNLOADS) > before)
+
+        # 歌手监控的增量去重
+        mid_before = len(stub_engine.DOWNLOADS)
+        c.post(f"/api/monitors/{aid}/run")
+        for _ in range(60):
+            time.sleep(0.5)
+            runs = c.get(f"/api/monitors/{aid}/runs").json()["items"]
+            if len(runs) >= 2 and runs[0]["finished_at"]:
+                break
+        check("歌手关注二次运行不重复下载", len(stub_engine.DOWNLOADS) == mid_before,
+              f"before={mid_before} after={len(stub_engine.DOWNLOADS)}")
+
+        # 非法 kind 应被拒绝
+        bad = dict(artist_mon, kind="singer")
+        check("未知监控类型被拒绝", c.post("/api/monitors", json=bad).status_code == 422)
+
+        detail = c.get(f"/api/monitors/{aid}").json()
+        check("歌手关注 target 原样保存", detail["monitor"]["target"]["artists"][0]["name"] == "周杰伦",
+              str(detail["monitor"]["target"]))
+        c.delete(f"/api/monitors/{aid}")
+
     print("\n" + "=" * 62)
     print(f"通过 {len(PASS)} 项，失败 {len(FAIL)} 项")
     for item in FAIL:

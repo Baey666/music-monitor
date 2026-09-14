@@ -21,7 +21,7 @@ CREATE TABLE IF NOT EXISTS monitors (
     kind              TEXT    NOT NULL,              -- chart | playlist | favorites
     enabled           INTEGER NOT NULL DEFAULT 1,
     sources           TEXT    NOT NULL DEFAULT '[]', -- JSON: 参与的平台列表
-    target            TEXT    NOT NULL DEFAULT '{}', -- JSON: 榜单/链接/收藏夹的具体目标
+    target            TEXT    NOT NULL DEFAULT '{}', -- JSON: 榜单/链接/收藏夹/歌手的具体目标
     quality           TEXT    NOT NULL DEFAULT 'lossless',
     fallback          TEXT    NOT NULL DEFAULT 'best_effort', -- best_effort | skip
     auto_download     INTEGER NOT NULL DEFAULT 1,
