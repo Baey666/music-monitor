@@ -1,0 +1,72 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 880 470" width="880" height="470" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', sans-serif">
+  <title>部署四步走</title>
+  <desc>建目录、写配置、启动容器、浏览器里初始化，四步完成部署。</desc>
+  <defs>
+    <marker id="s" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M2 1L8 5L2 9" fill="none" stroke="#888780" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
+    </marker>
+  </defs>
+
+  <g>
+    <circle cx="62" cy="56" r="20" fill="#E6F1FB" stroke="#185FA5" stroke-width="1.5"/>
+    <text x="62" y="56" text-anchor="middle" dominant-baseline="central" font-size="16" font-weight="500" fill="#0C447C">1</text>
+    <text x="102" y="48" font-size="15" font-weight="500" fill="#2C2C2A">在飞牛上建一个文件夹</text>
+    <text x="102" y="69" font-size="12.5" fill="#5F5E5A">比如 /vol1/docker/music-monitor</text>
+  </g>
+  <path d="M62 76 V116" fill="none" stroke="#888780" stroke-width="1.5" marker-end="url(#s)"/>
+
+  <g>
+    <circle cx="62" cy="137" r="20" fill="#E6F1FB" stroke="#185FA5" stroke-width="1.5"/>
+    <text x="62" y="137" text-anchor="middle" dominant-baseline="central" font-size="16" font-weight="500" fill="#0C447C">2</text>
+    <text x="102" y="129" font-size="15" font-weight="500" fill="#2C2C2A">把配置文件放进去</text>
+    <text x="102" y="150" font-size="12.5" fill="#5F5E5A">新建 docker-compose.yml，内容照抄</text>
+  </g>
+  <g>
+    <rect x="614" y="104" width="226" height="66" rx="8" fill="#FAEEDA" stroke="#BA7517" stroke-width="1.5"/>
+    <text x="727" y="126" text-anchor="middle" font-size="12.5" font-weight="500" fill="#633806">全文只有这一处要改</text>
+    <text x="727" y="146" text-anchor="middle" font-size="12" fill="#854F0B">把音乐目录换成你自己的</text>
+    <text x="727" y="161" text-anchor="middle" font-size="12" fill="#854F0B">两个服务里要写一样的</text>
+  </g>
+  <path d="M608 137 H470" fill="none" stroke="#BA7517" stroke-width="1.2" stroke-dasharray="4 4"/>
+
+  <path d="M62 157 V197" fill="none" stroke="#888780" stroke-width="1.5" marker-end="url(#s)"/>
+
+  <g>
+    <circle cx="62" cy="218" r="20" fill="#E6F1FB" stroke="#185FA5" stroke-width="1.5"/>
+    <text x="62" y="218" text-anchor="middle" dominant-baseline="central" font-size="16" font-weight="500" fill="#0C447C">3</text>
+    <text x="102" y="210" font-size="15" font-weight="500" fill="#2C2C2A">敲命令启动</text>
+    <text x="102" y="231" font-size="12.5" fill="#5F5E5A">看到两个容器都是 running 就成了</text>
+  </g>
+  <g>
+    <rect x="614" y="185" width="226" height="66" rx="8" fill="#E1F5EE" stroke="#0F6E56" stroke-width="1.5"/>
+    <text x="727" y="207" text-anchor="middle" font-size="12.5" font-weight="500" fill="#085041">不想敲命令也行</text>
+    <text x="727" y="227" text-anchor="middle" font-size="12" fill="#0F6E56">飞牛 Docker 界面里点</text>
+    <text x="727" y="242" text-anchor="middle" font-size="12" fill="#0F6E56">「导入 Compose」效果一样</text>
+  </g>
+  <path d="M608 218 H470" fill="none" stroke="#0F6E56" stroke-width="1.2" stroke-dasharray="4 4"/>
+
+  <path d="M62 238 V278" fill="none" stroke="#888780" stroke-width="1.5" marker-end="url(#s)"/>
+
+  <g>
+    <circle cx="62" cy="299" r="20" fill="#E6F1FB" stroke="#185FA5" stroke-width="1.5"/>
+    <text x="62" y="299" text-anchor="middle" dominant-baseline="central" font-size="16" font-weight="500" fill="#0C447C">4</text>
+    <text x="102" y="291" font-size="15" font-weight="500" fill="#2C2C2A">打开浏览器，把服务用起来</text>
+    <text x="102" y="312" font-size="12.5" fill="#5F5E5A">建监控、登录平台、开自动下载</text>
+  </g>
+  <g>
+    <rect x="614" y="266" width="226" height="66" rx="8" fill="#EEEDFE" stroke="#534AB7" stroke-width="1.5"/>
+    <text x="727" y="288" text-anchor="middle" font-size="12.5" font-weight="500" fill="#3C3489">这一步不用命令行</text>
+    <text x="727" y="308" text-anchor="middle" font-size="12" fill="#534AB7">全是网页上点，四个小步骤</text>
+    <text x="727" y="323" text-anchor="middle" font-size="12" fill="#534AB7">见下面的初始化说明</text>
+  </g>
+  <path d="M608 299 H470" fill="none" stroke="#534AB7" stroke-width="1.2" stroke-dasharray="4 4"/>
+
+  <path d="M62 319 V352" fill="none" stroke="#888780" stroke-width="1.5" marker-end="url(#s)"/>
+
+  <g>
+    <rect x="42" y="356" width="798" height="86" rx="14" fill="#F1EFE8" stroke="#5F5E5A" stroke-width="1.5"/>
+    <text x="441" y="384" text-anchor="middle" font-size="14.5" font-weight="500" fill="#2C2C2A">搞定之后它会自己跑</text>
+    <text x="441" y="410" text-anchor="middle" font-size="13" fill="#5F5E5A">每隔一段时间自动去看你盯的内容 → 发现新歌就下载 → 存进你的音乐文件夹</text>
+    <text x="441" y="430" text-anchor="middle" font-size="12.5" fill="#888780">飞牛音乐 App / Emby / Jellyfin 扫一下那个文件夹，新歌就在了</text>
+  </g>
+</svg>
