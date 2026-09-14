@@ -2,7 +2,7 @@
 
 > 📺 **视频演示**：[《飞牛音乐解放双手》Bilibili](https://www.bilibili.com/video/BV1GTYD6jEyG/)（3 分 14 秒，看完整流程演示）
 > 🐙 **开源地址**：[github.com/Baey666/music-monitor](https://github.com/Baey666/music-monitor)（AGPL-3.0，支持 amd64 / arm64）
-> 📦 **当前版本**：v1.0.6
+> 📦 **当前版本**：v1.0.7
 
 ## 一、music-monitor 是什么
 
