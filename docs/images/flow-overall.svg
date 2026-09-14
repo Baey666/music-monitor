@@ -1,0 +1,69 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 880 620" width="880" height="620" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', sans-serif">
+  <title>music-monitor 整体工作流程</title>
+  <desc>从浏览器到监控服务再到下载引擎，最后把音乐存到硬盘的完整链路。</desc>
+  <defs>
+    <marker id="a" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M2 1L8 5L2 9" fill="none" stroke="#888780" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+    </marker>
+  </defs>
+
+  <g>
+    <rect x="300" y="24" width="280" height="56" rx="10" fill="#F1EFE8" stroke="#5F5E5A" stroke-width="1.5"/>
+    <text x="440" y="46" text-anchor="middle" font-size="15" font-weight="500" fill="#2C2C2A">你 · 浏览器</text>
+    <text x="440" y="66" text-anchor="middle" font-size="12.5" fill="#5F5E5A">打开 :9090 建监控、看下载记录</text>
+  </g>
+  <path d="M440 80 V116" fill="none" stroke="#888780" stroke-width="1.5" marker-end="url(#a)"/>
+
+  <rect x="80" y="120" width="720" height="290" rx="16" fill="#E6F1FB" stroke="#185FA5" stroke-width="1.5"/>
+  <text x="104" y="148" font-size="15" font-weight="500" fill="#0C447C">music-monitor 监控服务</text>
+  <text x="104" y="168" font-size="12.5" fill="#185FA5">容器 · 端口 9090 · 负责「决定下什么」</text>
+
+  <g>
+    <rect x="112" y="188" width="200" height="52" rx="8" fill="#ffffff" stroke="#378ADD" stroke-width="1.5"/>
+    <text x="212" y="207" text-anchor="middle" font-size="13.5" font-weight="500" fill="#0C447C">① 定时唤醒</text>
+    <text x="212" y="226" text-anchor="middle" font-size="12" fill="#185FA5">默认每 60 分钟检查一次</text>
+  </g>
+  <path d="M312 214 H344" fill="none" stroke="#888780" stroke-width="1.5" marker-end="url(#a)"/>
+
+  <g>
+    <rect x="348" y="188" width="200" height="52" rx="8" fill="#ffffff" stroke="#378ADD" stroke-width="1.5"/>
+    <text x="448" y="207" text-anchor="middle" font-size="13.5" font-weight="500" fill="#0C447C">② 列出所有歌</text>
+    <text x="448" y="226" text-anchor="middle" font-size="12" fill="#185FA5">去看你盯的内容</text>
+  </g>
+  <path d="M548 214 H580" fill="none" stroke="#888780" stroke-width="1.5" marker-end="url(#a)"/>
+
+  <g>
+    <rect x="584" y="188" width="184" height="52" rx="8" fill="#ffffff" stroke="#378ADD" stroke-width="1.5"/>
+    <text x="676" y="207" text-anchor="middle" font-size="13.5" font-weight="500" fill="#0C447C">③ 比出新的</text>
+    <text x="676" y="226" text-anchor="middle" font-size="12" fill="#185FA5">下过的不会重复下</text>
+  </g>
+
+  <path d="M212 240 V274" fill="none" stroke="#888780" stroke-width="1.5"/>
+  <path d="M676 240 V274" fill="none" stroke="#888780" stroke-width="1.5"/>
+  <path d="M212 274 H676" fill="none" stroke="#888780" stroke-width="1.5"/>
+  <path d="M444 274 V300" fill="none" stroke="#888780" stroke-width="1.5" marker-end="url(#a)"/>
+
+  <g>
+    <rect x="216" y="304" width="456" height="56" rx="8" fill="#FAEEDA" stroke="#BA7517" stroke-width="1.5"/>
+    <text x="444" y="326" text-anchor="middle" font-size="13.5" font-weight="500" fill="#633806">④ 检查版本和音源</text>
+    <text x="444" y="346" text-anchor="middle" font-size="12" fill="#854F0B">试听 / Live / DJ 版扔掉；音质不够就去别的平台找</text>
+  </g>
+  <path d="M444 360 V384" fill="none" stroke="#888780" stroke-width="1.5" marker-end="url(#a)"/>
+
+  <g>
+    <rect x="296" y="388" width="296" height="34" rx="8" fill="#ffffff" stroke="#378ADD" stroke-width="1.5"/>
+    <text x="444" y="410" text-anchor="middle" font-size="13" fill="#185FA5">⑤ 交给引擎下载，等它下完 ⑥ 记录结果</text>
+  </g>
+
+  <path d="M440 424 V464" fill="none" stroke="#888780" stroke-width="1.5" marker-end="url(#a)"/>
+  <text x="456" y="450" font-size="12" fill="#888780">容器内网通信</text>
+
+  <rect x="80" y="468" width="720" height="104" rx="16" fill="#E1F5EE" stroke="#0F6E56" stroke-width="1.5"/>
+  <text x="104" y="496" font-size="15" font-weight="500" fill="#085041">go-music-dl 下载引擎</text>
+  <text x="104" y="516" font-size="12.5" fill="#0F6E56">容器 · 端口 8085 · 负责「真的去下」</text>
+  <text x="104" y="542" font-size="13" fill="#0F6E56">搜索平台 → 拿音源 → 存文件 → 记住下过什么</text>
+  <text x="104" y="562" font-size="12" fill="#0F6E56">音质高低取决于这里登录的平台账号是不是会员</text>
+
+  <path d="M440 572 V594" fill="none" stroke="#888780" stroke-width="1.5" marker-end="url(#a)"/>
+  <text x="440" y="612" text-anchor="middle" font-size="13" font-weight="500" fill="#2C2C2A">硬盘上的音乐文件夹（如 /vol2/.../Music）</text>
+</svg>
