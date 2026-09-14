@@ -300,7 +300,7 @@ const App = (() => {
         : `<span class="status failed">不可用</span>`) : '';
       return `<div class="card">
         <div class="row tight"><b>${esc(c.name)}</b>${badge}</div>
-        <div class="muted small mono" style="word-break:break-all;margin:6px 0">${esc(c.id || c.link || '')}</div>
+        <div class="muted small mono" style="word-break:break-all;margin:6px 0">${esc(c.rank ? c.platform + ' 榜单 ' + c.rank : (c.id || c.link || ''))}</div>
         ${c.note ? `<div class="muted small">${esc(c.note)}</div>` : ''}
         ${v && !v.ok && v.message ? `<div class="small" style="color:var(--err)">${esc(v.message)}</div>` : ''}
         <div class="row tight" style="margin-top:8px">
@@ -723,7 +723,7 @@ const App = (() => {
     if (kind === 'chart') {
       const charts = [...state.chartSel].map((key) => {
         const c = state.chartIndex[key];
-        return { key, name: c.name, platform: c.platform, id: c.id || '', link: c.link || '' };
+        return { key, name: c.name, platform: c.platform, id: c.id || '', link: c.link || '', rank: c.rank || '' };
       });
       parseLinkLines($('m-chart-links').value).forEach((x) => charts.push({ name: x.name, link: x.link }));
       target.charts = charts;

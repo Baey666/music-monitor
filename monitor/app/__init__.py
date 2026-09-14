@@ -7,4 +7,4 @@
    校验是否一致：`scripts/version.sh check`
 """
 
-__version__ = "1.0.6"
+__version__ = "1.0.7"

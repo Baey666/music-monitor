@@ -223,8 +223,11 @@ def main() -> int:
         js = c.get("/static/app.js")
         check("脚本可访问", js.status_code == 200 and "App" in js.text)
         groups = c.get("/api/charts").json()["groups"]
-        check("榜单分组返回正常", len(groups) >= 5 and all("charts" in g for g in groups), f"groups={len(groups)}")
+        check("榜单分组返回正常", len(groups) >= 4 and all("charts" in g for g in groups), f"groups={len(groups)}")
         check("内置榜单键索引完整", "netease_hot" in c.get("/api/charts").json()["index"])
+        index = c.get("/api/charts").json()["index"]
+        check("QQ/酷狗/酷我 榜单改用榜单接口", all(index[k].get("rank") for k in ("qq_hot", "kugou_top500", "kuwo_hot")))
+        check("网易云榜单仍走歌单 ID", bool(index["netease_hot"].get("id")))
 
         mid2 = c.post("/api/monitors", json=monitor).json()["id"]
         r = c.post(f"/api/monitors/{mid2}/preview").json()
