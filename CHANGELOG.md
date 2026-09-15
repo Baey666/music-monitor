@@ -19,7 +19,15 @@
 
 ## [Unreleased]
 
-## [1.2.0] - 2026-09-15
+## [1.2.1] - 2026-09-15
+
+### 修复
+
+- **每次请求 `/favicon.ico` 服务端都在抛异常**：`204` 状态按 HTTP 规范不能带 body，
+  之前返回的是 `JSONResponse({}, 204)`（带 2 字节 `{}`），uvicorn 每次都在发送阶段抛
+  `RuntimeError: Response content longer than Content-Length`，并**打断那条 keep-alive 连接**。
+  浏览器虽然仍收到合法的 204，但和它复用同一条连接的后续请求会一起断掉，表现像「点了没反应」。
+  现在改为返回不带 body 的 `204`。
 
 ## [1.2.0] - 2026-09-15
 

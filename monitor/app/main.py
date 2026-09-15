@@ -9,7 +9,7 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import FastAPI
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, Response
 from fastapi.staticfiles import StaticFiles
 
 from . import __version__
@@ -64,7 +64,10 @@ app.include_router(router)
 
 @app.get("/favicon.ico", include_in_schema=False)
 async def favicon():
-    return JSONResponse({}, status_code=204)
+    # 204 按 HTTP 规范不能带 body。之前返回 JSONResponse({}, 204) 会带 2 字节 body，
+    # uvicorn 每次都在 send 阶段抛 RuntimeError: Response content longer than Content-Length
+    # （浏览器仍收到合法的 204，但那条 keep-alive 连接会被打断，表现像「点了没反应」）。
+    return Response(status_code=204)
 
 
 @app.get("/", include_in_schema=False)

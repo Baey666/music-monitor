@@ -65,6 +65,46 @@ def serve(app, port: int) -> uvicorn.Server:
     return server
 
 
+def asgi_get(app, path: str) -> tuple[int, bytes]:
+    """直接调 ASGI，拿到 (状态码, 完整 body)，不经过网络。
+
+    有些错在 HTTP 层看不出来：`204` 带 body 时客户端会把 body 丢掉（httpx 读出 `b''`），
+    只有 uvicorn 自己会在 send 阶段抛 `RuntimeError: Response content longer than
+    Content-Length` 并打断 keep-alive 连接。所以要在这层断言。
+    """
+    import asyncio  # noqa: PLC0415
+
+    async def run() -> tuple[int, bytes]:
+        messages: list[dict] = []
+
+        async def receive() -> dict:
+            return {"type": "http.request", "body": b"", "more_body": False}
+
+        async def send(message: dict) -> None:
+            messages.append(message)
+
+        scope = {
+            "type": "http",
+            "asgi": {"version": "3.0", "spec_version": "2.3"},
+            "http_version": "1.1",
+            "method": "GET",
+            "scheme": "http",
+            "path": path,
+            "raw_path": path.encode(),
+            "query_string": b"",
+            "root_path": "",
+            "headers": [(b"host", b"testserver")],
+            "client": ("127.0.0.1", 12345),
+            "server": ("127.0.0.1", 80),
+        }
+        await app(scope, receive, send)
+        status = next(m["status"] for m in messages if m["type"] == "http.response.start")
+        body = b"".join(m.get("body", b"") for m in messages if m["type"] == "http.response.body")
+        return status, body
+
+    return asyncio.run(run())
+
+
 def run_and_wait(c: httpx.Client, mid: int, timeout: float = 60.0) -> dict:
     """触发一次执行并等它**真的**结束。
 
@@ -245,6 +285,15 @@ def main() -> int:
         check("样式表可访问", c.get("/static/style.css").status_code == 200)
         js = c.get("/static/app.js")
         check("脚本可访问", js.status_code == 200 and "App" in js.text)
+        # 204 不能带 body：带 body 时 uvicorn 每次都在 send 阶段抛
+        # RuntimeError: Response content longer than Content-Length，并打断 keep-alive 连接。
+        # HTTP 层看不出（客户端把 body 丢掉），必须在 ASGI 层断言。
+        fav_status, fav_body = asgi_get(monitor_app, "/favicon.ico")
+        check(
+            "favicon 是空 body 的 204",
+            fav_status == 204 and fav_body == b"",
+            f"{fav_status} body={fav_body!r}",
+        )
         groups = c.get("/api/charts").json()["groups"]
         check("榜单分组返回正常", len(groups) >= 4 and all("charts" in g for g in groups), f"groups={len(groups)}")
         check("内置榜单键索引完整", "netease_hot" in c.get("/api/charts").json()["index"])
