@@ -39,6 +39,9 @@ async def lifespan(app: FastAPI):
     username = db.get_setting("engine_username") or ""
     password = db.get_setting("engine_password") or ""
     if username:
+        # 先把凭据交给引擎记住：就算这次登录失败（比如引擎还没就绪），
+        # 之后 /api/engine/session 和各受保护调用也能自动补登录
+        engine.set_credentials(str(username), str(password))
         result = await engine.login(str(username), str(password))
         if result.get("ok"):
             log.info("已用保存的账号恢复引擎会话：%s", username)

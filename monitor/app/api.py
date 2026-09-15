@@ -352,7 +352,12 @@ async def engine_logout() -> dict[str, Any]:
 
 @router.get("/engine/session")
 async def engine_session() -> dict[str, Any]:
-    """引擎会话现状：是否持有凭据、此刻是否仍然有效。"""
+    """引擎会话现状：是否持有凭据、此刻是否仍然有效。
+
+    顺手做一次自愈：会话丢了但设置里存过账号密码，就用它自动重登 ——
+    这样刷新页面看到的不再是「要重新登录」，而是已经恢复好的会话。
+    """
+    await engine.ensure_session()
     logged_in = engine.logged_in
     return {
         "logged_in": logged_in,

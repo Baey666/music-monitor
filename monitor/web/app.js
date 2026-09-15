@@ -113,6 +113,8 @@ const App = (() => {
   }
 
   async function checkEngine() {
+    let sess = null;
+    try { sess = await api('/engine/session'); } catch (_) { /* 拿不到就退回 /health 的口径 */ }
     try {
       const data = await api('/health');
       const ok = data.engine && data.engine.ok;
@@ -126,7 +128,7 @@ const App = (() => {
       $('engine-info').innerHTML = [
         ['引擎地址', data.engine.url],
         ['连接状态', ok ? '正常' : ('失败 — ' + (data.engine.detail || ''))],
-        ['引擎登录', sessionText(data.engine)],
+        ['引擎登录', sessionText(data.engine, sess)],
         ['调度心跳', (s.tick_seconds || '—') + ' 秒'],
         ['并行监控上限', s.parallel_limit],
         ['单监控并发下载', s.download_concurrency],
@@ -140,7 +142,18 @@ const App = (() => {
     }
   }
 
-  function sessionText(eng) {
+  function sessionText(eng, sess) {
+    // 优先用 /engine/session 的口径（它会顺手自动恢复会话），拿不到再退回 /health 的
+    if (sess) {
+      const saved = sess.saved_username ? '（账号 ' + sess.saved_username + '）' : '';
+      if (sess.logged_in && sess.session_ok) return '已登录，会话有效' + saved;
+      if (!sess.logged_in) {
+        return '未登录' + (saved
+          ? '，已保存账号 ' + sess.saved_username + '，会话丢失时会自动恢复'
+          : '（搜索/下载不需要登录，只有代写 Cookie 才需要）');
+      }
+      return '持有凭据但会话已失效，请重新登录';
+    }
     if (!eng) return '未知';
     if (!eng.logged_in) return '未登录（搜索/下载不需要登录，只有代写 Cookie 才需要）';
     return eng.session_ok ? '已登录，会话有效' : '持有凭据但会话已失效，请重新登录';

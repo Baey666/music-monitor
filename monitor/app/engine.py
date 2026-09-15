@@ -336,7 +336,15 @@ class Engine:
 
         token = r.cookies.get(SESSION_COOKIE)
         if not token:
-            # 明确失败：清掉旧会话，否则后续接口会拿旧 Cookie 继续「看起来能用」
+            # 已经持有一个**仍然有效**的会话时，不要因为一次输错密码就把它整个清掉 ——
+            # 否则手滑一次就得从头再来，看上去就像「登录不固化」（真实用户就这么丢过会话）。
+            if self._session_cookies and await self.session_ok():
+                return {
+                    "ok": False,
+                    "detail": "账号或密码不正确；当前会话仍然有效，已保留（要换账号请先退出登录）",
+                    "kept_session": True,
+                }
+            # 真的没有可用会话：清掉残留的旧 Cookie，否则后续接口会拿旧 Cookie 继续「看起来能用」
             self._session_cookies = {}
             c.cookies.clear()
             return {
@@ -350,8 +358,25 @@ class Engine:
             self._session_cookies = previous
             return {"ok": False, "detail": "已拿到会话 Cookie，但访问受保护接口仍被拒绝，登录未生效"}
 
-        self._username, self._password = username, password
+        self.set_credentials(username, password)
         return {"ok": True, "detail": "已登录"}
+
+    def set_credentials(self, username: str, password: str) -> None:
+        """记住凭据（只在本进程内存里，落库由 db 负责），供会话丢失后自动重登。"""
+        self._username = username or ""
+        self._password = password or ""
+
+    async def ensure_session(self) -> bool:
+        """会话仍有效就直接用；丢了就用记住的凭据自动重登。
+
+        这是「账号密码固化」的兜底：引擎重启、会话过期、本服务重启之后，
+        只要设置里存过正确的账号密码，就不需要用户再手动登录一次。
+        """
+        if await self.session_ok():
+            return True
+        if not (self._username and self._password):
+            return False
+        return bool((await self.login(self._username, self._password)).get("ok"))
 
     async def logout(self) -> dict[str, Any]:
         """丢弃本地会话凭据（不调上游登出接口）。"""
@@ -366,6 +391,8 @@ class Engine:
 
         这是拿到无损/高码率的关键：引擎按平台 Cookie 的会员等级决定实际音质。
         """
+        if not self._session_cookies:
+            await self.ensure_session()
         if not self._session_cookies:
             raise EngineError("尚未登录引擎，无法写入 Cookie（请在「设置 → 引擎连接」里登录引擎管理员账号）")
         c = await self.client()
@@ -384,6 +411,8 @@ class Engine:
 
     async def get_cookies(self) -> dict[str, str]:
         if not self._session_cookies:
+            await self.ensure_session()
+        if not self._session_cookies:
             return {}
         c = await self.client()
         r = await c.get(self.url("/cookies"), headers=JSON_HEADERS, cookies=self._session_cookies)
@@ -395,6 +424,8 @@ class Engine:
         return data if isinstance(data, dict) else {}
 
     async def save_settings(self, payload: dict[str, Any]) -> dict[str, Any]:
+        if not self._session_cookies:
+            await self.ensure_session()
         if not self._session_cookies:
             raise EngineError("尚未登录引擎，无法修改引擎设置")
         c = await self.client()

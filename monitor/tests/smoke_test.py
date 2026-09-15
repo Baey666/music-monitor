@@ -393,14 +393,18 @@ def main() -> int:
               str(c.get("/api/engine/cookies").json()))
         check("/api/health 报告会话有效", c.get("/api/health").json()["engine"]["session_ok"] is True)
 
-        # 再用一次错误凭据：应该把前面的有效会话清掉，而不是继续「看起来是登录状态」
+        # 再用一次错误凭据：**不能**把仍然有效的会话清掉 —— 否则手滑输错一次密码就得整个重来，
+        # 看起来就像「登录不固化」（真实用户就是这么丢掉会话的：明明 10 分钟前刚登录成功）。
         r = c.post("/api/engine/login", json={"username": "admin", "password": "nope-nope"}).json()
         check("再次错误登录仍报失败", r.get("ok") is False, str(r))
-        check("错误登录后旧会话被清掉", c.get("/api/engine/session").json()["session_ok"] is False,
+        check("报错说明保留了现有会话", "仍然有效" in (r.get("detail") or ""), str(r.get("detail")))
+        check("错误登录不清掉仍然有效的会话", c.get("/api/engine/session").json()["session_ok"] is True,
               str(c.get("/api/engine/session").json()))
         c.post("/api/engine/logout")
         check("退出登录后凭据清空", (c.get("/api/settings").json()["settings"].get("engine_username") or "") == "",
               str(c.get("/api/settings").json()["settings"]))
+        # 退出之后不该再「自愈」——否则用户就退不出去了
+        check("退出后不会自动恢复会话", c.get("/api/engine/session").json()["session_ok"] is False)
 
         # ---------------- 18. 「引擎库里已有」不重复推送 ----------------
         # 回归：上游 skip 时回的是 `skipped:true + path:"" + filename(无扩展名)`。
@@ -464,6 +468,22 @@ def main() -> int:
         check("出现了第 2 批（一批下完才推下一批）", "第 2 批：推送 1 首" in log, log[:400])
         check("日志给出引擎已存在的口径", "引擎侧已存在" in log, log[-400:])
         c.delete(f"/api/monitors/{bid}")
+
+        # ---------------- 20. 会话固化：丢了要能自动恢复 ----------------
+        # 回归：会话中途失效（引擎重启 / 过期 / 本服务重启）后，只要设置里存过正确凭据，
+        # 就应该自动补登录，而不是让用户「每次刷新页面都要重新登录」。
+        print("\n[20] 会话固化（会话丢了自动用保存的凭据补登录）")
+        r = c.post("/api/engine/login", json={"username": "admin", "password": "correct-horse"}).json()
+        check("重新登录成功", r.get("ok") is True, str(r))
+        stub_engine.SESSIONS.clear()      # 模拟引擎侧重启 / 会话整体过期
+        sess = c.get("/api/engine/session").json()
+        check("会话失效后自动用保存的凭据恢复", sess["session_ok"] is True, str(sess))
+        check("恢复后账号还是原来那个", sess.get("saved_username") == "admin", str(sess))
+        check("恢复后受保护接口可用", "netease" in (c.get("/api/engine/cookies").json().get("configured") or []),
+              str(c.get("/api/engine/cookies").json()))
+        c.post("/api/engine/logout")
+        check("退出后不再自动恢复", c.get("/api/engine/session").json()["session_ok"] is False,
+              str(c.get("/api/engine/session").json()))
 
     print("\n" + "=" * 62)
     print(f"通过 {len(PASS)} 项，失败 {len(FAIL)} 项")
