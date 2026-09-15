@@ -48,6 +48,12 @@ services:
       - TICK_SECONDS=${TICK_SECONDS:-60}
       - DOWNLOAD_CONCURRENCY=${DOWNLOAD_CONCURRENCY:-1}
       - DOWNLOAD_RETRIES=${DOWNLOAD_RETRIES:-2}
+      # 分批推送：每批多少首、批与批之间歇多久、单个下载请求超时多久
+      - DOWNLOAD_BATCH=${DOWNLOAD_BATCH:-8}
+      - DOWNLOAD_BATCH_GAP=${DOWNLOAD_BATCH_GAP:-3}
+      - DOWNLOAD_TIMEOUT=${DOWNLOAD_TIMEOUT:-300}
+      # 0 = 不限，由每个监控自己的「单次最多下载」说了算
+      - MAX_DOWNLOADS_PER_RUN=${MAX_DOWNLOADS_PER_RUN:-0}
       - DEFAULT_QUALITY=${DEFAULT_QUALITY:-lossless}
       - TZ=${TZ:-Asia/Shanghai}
     depends_on:

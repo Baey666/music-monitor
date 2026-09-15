@@ -126,6 +126,7 @@ const App = (() => {
       $('engine-info').innerHTML = [
         ['引擎地址', data.engine.url],
         ['连接状态', ok ? '正常' : ('失败 — ' + (data.engine.detail || ''))],
+        ['引擎登录', sessionText(data.engine)],
         ['调度心跳', (s.tick_seconds || '—') + ' 秒'],
         ['并行监控上限', s.parallel_limit],
         ['单监控并发下载', s.download_concurrency],
@@ -137,6 +138,12 @@ const App = (() => {
       $('engine-text').textContent = '后端异常';
       return false;
     }
+  }
+
+  function sessionText(eng) {
+    if (!eng) return '未知';
+    if (!eng.logged_in) return '未登录（搜索/下载不需要登录，只有代写 Cookie 才需要）';
+    return eng.session_ok ? '已登录，会话有效' : '持有凭据但会话已失效，请重新登录';
   }
 
   function fillQualitySelects() {
@@ -468,10 +475,12 @@ const App = (() => {
         <td class="mono">${esc(fmtTime(r.started_at))}</td>
         <td>${esc(nameOf[r.monitor_id] || ('#' + r.monitor_id))}</td>
         <td><span class="status ${esc(r.status)}">${esc(r.status)}</span></td>
-        <td>${r.found}</td><td>${r.new_items}</td><td>${r.downloaded}</td><td>${r.skipped}</td><td>${r.failed}</td>
+        <td>${r.found}</td><td>${r.new_items}</td><td>${r.downloaded}</td>
+        <td class="muted" title="这些歌引擎库里已经有，没有产生新文件（所以和引擎的下载记录条数天生不等）">${r.engine_skipped != null ? r.engine_skipped : '—'}</td>
+        <td>${r.skipped}</td><td>${r.failed}</td>
         <td class="small muted">${esc((r.message || '').slice(0, 80))}</td>
         <td><button class="btn small" onclick="App.showRunLog(${r.id})">日志</button></td>
-      </tr>`).join('') || '<tr><td colspan="10" class="empty">暂无执行记录</td></tr>';
+      </tr>`).join('') || '<tr><td colspan="11" class="empty">暂无执行记录</td></tr>';
   }
 
   async function showRunLog(runId) {
@@ -570,13 +579,35 @@ const App = (() => {
 
   async function engineLogin() {
     const box = $('engine-login-result');
-    box.textContent = '登录中…';
+    const u = $('engine-username').value.trim();
+    const p = $('engine-password').value;
+    if (!u || !p) { box.innerHTML = '<span style="color:var(--err)">请填写引擎管理员账号与密码</span>'; return; }
+    box.textContent = '正在登录引擎…';
     try {
       const r = await api('/engine/login', {
         method: 'POST',
-        body: JSON.stringify({ username: $('engine-username').value, password: $('engine-password').value }),
+        body: JSON.stringify({ username: u, password: p }),
       });
-      box.innerHTML = r.ok ? '<span style="color:var(--ok)">登录成功</span>' : `<span style="color:var(--err)">${esc(r.detail)}</span>`;
+      if (r.ok) {
+        box.innerHTML = '<span style="color:var(--ok)">登录成功</span>，已保存账号 ' + esc(u) +
+          (r.configured && r.configured.length ? '；引擎里已有 Cookie 的平台：<b>' + esc(r.configured.join('、')) + '</b>' : '');
+        $('engine-password').value = '';
+        await checkEngine();
+      } else {
+        box.innerHTML = '<span style="color:var(--err)">登录失败：' + esc(r.detail) + '</span>' +
+          (r.saved_username ? '（仍保留原来保存的账号 ' + esc(r.saved_username) + '）' : '');
+      }
+    } catch (err) { box.innerHTML = `<span style="color:var(--err)">${esc(err.message)}</span>`; }
+  }
+
+  async function engineLogout() {
+    const box = $('engine-login-result');
+    try {
+      await api('/engine/logout', { method: 'POST' });
+      $('engine-username').value = '';
+      $('engine-password').value = '';
+      box.innerHTML = '已退出引擎登录，保存的账号密码也已清除。';
+      await checkEngine();
     } catch (err) { box.innerHTML = `<span style="color:var(--err)">${esc(err.message)}</span>`; }
   }
 
@@ -844,7 +875,7 @@ const App = (() => {
     verifyCharts, verifyChart, previewChart, monitorFromChart, resolveCustomChart, monitorFromCustomChart,
     resolvePlaylist, monitorFromPlaylist, loadFavorites, createFavoritesMonitor,
     loadRuns, loadTracks, showRunLog, retryTracks, retryFailed,
-    loadSettings, saveSettings, engineLogin, engineCookies, pushCookies, checkEngine,
+    loadSettings, saveSettings, engineLogin, engineLogout, engineCookies, pushCookies, checkEngine,
     openMonitorModal, editMonitor, closeModal, saveMonitor, previewDraft, onKindChange,
     currentChartKeys,
   };

@@ -6,16 +6,20 @@ import difflib
 import logging
 import os
 import re
+import time
 from pathlib import Path
 from typing import Any
 
 from . import quality as q
 from .charts import resolve_chart
 from .config import settings
-from .db import Database, now_iso
+from .db import Database, fingerprint, now_iso
 from .engine import Engine, EngineError
 
 log = logging.getLogger("monitor.pipeline")
+
+# 容器内下载目录（只读挂载）。用于判断文件是否还在、以及把引擎给的裸文件名还原成路径。
+DOWNLOAD_ROOT = os.getenv("DOWNLOADS_MOUNT", "/downloads")
 
 
 # --------------------------------------------------------------------------- 工具
@@ -71,12 +75,65 @@ def _file_exists(file_path: str) -> bool:
         candidates = [path]
         marker = "/home/appuser/data/downloads/"
         if marker in path.as_posix():
-            candidates.append(Path("/downloads") / path.as_posix().split(marker, 1)[1])
+            candidates.append(Path(DOWNLOAD_ROOT) / path.as_posix().split(marker, 1)[1])
         return any(candidate.is_file() for candidate in candidates)
     # go-music-dl 返回的通常是 data/downloads/...，对应 monitor 的只读 /downloads。
     if str(path).startswith("data/downloads/"):
-        return (Path("/downloads") / path.relative_to("data/downloads")).is_file()
-    return False
+        return (Path(DOWNLOAD_ROOT) / path.relative_to("data/downloads")).is_file()
+    # 兜底：上游在「已有该歌曲、跳过下载」时 path 是空字符串，只剩一个**没有扩展名**的
+    # filename（如「陈奕迅 - 富士山下」）。当路径存下来时，按主干去下载目录里找真实文件，
+    # 否则会被判成「文件不存在」→ 每轮重复推送同一批歌（引擎侧堆出一大堆 skipped 记录）。
+    return bool(resolve_download_path(file_path))
+
+
+# 下载目录索引（主干 → 真实文件名）。目录不会频繁变化，缓存 30 秒足够。
+_INDEX: dict[str, str] = {}
+_INDEX_AT = 0.0
+_INDEX_TTL = 30.0
+
+
+def _stem_index() -> dict[str, str]:
+    global _INDEX, _INDEX_AT
+    now = time.time()
+    if _INDEX and now - _INDEX_AT < _INDEX_TTL:
+        return _INDEX
+    index: dict[str, str] = {}
+    try:
+        for entry in Path(DOWNLOAD_ROOT).iterdir():
+            if entry.is_file():
+                index.setdefault(entry.stem, entry.name)
+    except OSError:  # 目录不存在 / 没权限 —— 交给调用方按「找不到」处理
+        index = {}
+    _INDEX, _INDEX_AT = index, now
+    return index
+
+
+def resolve_download_path(file_path: str) -> str:
+    """把引擎给的 path / filename 归一成 `data/downloads/<真实文件名>`；找不到就返回空串。
+
+    引擎「跳过下载」时只回 filename（无扩展名），直接存下来会让下一轮判定文件不存在，
+    所以这里统一还原成能校验、能展示的相对路径。
+    """
+    if not file_path:
+        return ""
+    name = Path(file_path).name
+    if not name:
+        return ""
+    matched = _stem_index().get(Path(name).stem)
+    if matched:
+        return f"data/downloads/{matched}"
+    # 刚才下载完的可能还没进索引，按主干再查一次目录
+    for entry in _iter_downloads():
+        if entry.stem == Path(name).stem:
+            return f"data/downloads/{entry.name}"
+    return ""
+
+
+def _iter_downloads() -> list[Path]:
+    try:
+        return [e for e in Path(DOWNLOAD_ROOT).iterdir() if e.is_file()]
+    except OSError:
+        return []
 
 
 def _match_keywords(song: dict[str, Any], include: list[str], exclude: list[str]) -> bool:
@@ -336,7 +393,7 @@ async def run_monitor(db: Database, engine: Engine, mon: dict[str, Any]) -> dict
     run_id = db.start_run(mon["id"])
     log_lines: list[str] = []
     warnings: list[str] = []
-    found = new_items = downloaded = skipped = failed = 0
+    found = new_items = downloaded = skipped = failed = engine_skipped = 0
 
     try:
         songs, warnings = await discover(engine, mon)
@@ -349,9 +406,9 @@ async def run_monitor(db: Database, engine: Engine, mon: dict[str, Any]) -> dict
         exclude = _keywords(mon.get("exclude_kw", ""))
         existing = db.existing_song_keys(mon["id"])
         downloaded_paths = db.downloaded_tracks(mon["id"])
+        downloaded_prints = db.downloaded_fingerprints(mon["id"])
         quality = q.normalize_quality(mon.get("quality"))
         sources = mon.get("sources") or []
-        max_downloads = min(int(mon.get("max_downloads") or 30), settings.max_downloads_per_run)
         auto_download = bool(mon.get("auto_download"))
 
         todo: list[dict[str, Any]] = []
@@ -359,6 +416,12 @@ async def run_monitor(db: Database, engine: Engine, mon: dict[str, Any]) -> dict
             key = (str(s.get("source", "")), str(s.get("id", "")))
             if key in existing and key in downloaded_paths and _file_exists(downloaded_paths[key]):
                 # 只有数据库记录仍对应真实文件时才跳过；文件被删后必须重新下载。
+                db.touch_track(mon["id"], s)
+                skipped += 1
+                continue
+            # 上一轮可能是在别的平台下到的（换源后曲目挂在新 source:id 下），
+            # 用 (source, id) 找不到，得按「歌名+歌手」认出它已经下过。
+            if fingerprint(s.get("name", ""), s.get("artist", "")) in downloaded_prints:
                 db.touch_track(mon["id"], s)
                 skipped += 1
                 continue
@@ -379,18 +442,22 @@ async def run_monitor(db: Database, engine: Engine, mon: dict[str, Any]) -> dict
             _reschedule(db, mon)
             return {"run_id": run_id, "found": found, "new": 0, "downloaded": 0, "skipped": skipped, "failed": 0, "warnings": warnings}
 
-        budget = max_downloads
+        # 本轮预算：以监控自己的「单次最多下载」为准；MAX_DOWNLOADS_PER_RUN>0 时才再夹一层硬上限
+        budget = max(1, int(mon.get("max_downloads") or 30))
+        if settings.max_downloads_per_run > 0:
+            budget = min(budget, settings.max_downloads_per_run)
+        batch = max(1, min(settings.download_batch, budget))
+        waves = (min(budget, len(todo)) + batch - 1) // batch
+        log_lines.append(
+            f"本轮上限 {budget} 首，按每批 {batch} 首分 {waves} 批推送（一批下完再推下一批）"
+        )
+
         sem = asyncio.Semaphore(settings.download_concurrency)
         lock = asyncio.Lock()
 
         async def handle(song: dict[str, Any]) -> None:
-            nonlocal downloaded, failed, skipped, budget
+            nonlocal downloaded, failed, engine_skipped
             async with sem:
-                async with lock:
-                    if budget <= 0:
-                        return
-                    # 先预留名额，再离开锁；避免并发任务同时通过检查。
-                    budget -= 1
                 head = f"[{song.get('_origin', '')}] {song.get('name', '')} - {song.get('artist', '')}"
                 local_log: list[str] = [f"- {head}"]
                 try:
@@ -415,25 +482,38 @@ async def run_monitor(db: Database, engine: Engine, mon: dict[str, Any]) -> dict
                             break
                         except Exception as exc:  # noqa: BLE001
                             last_error = str(exc)
+                            # 超时这类错误重试会造成上游重复落盘，直接作罢
+                            if not getattr(exc, "retryable", True):
+                                break
                             if attempt < settings.download_retries:
                                 local_log.append(f"  ! 下载失败，第 {attempt + 1} 次重试：{last_error}")
                                 await asyncio.sleep(min(2 * (attempt + 1), 5))
                     if result is None:
                         raise EngineError(last_error or "下载失败，未收到上游确认")
 
-                    file_path = result.get("path") or result.get("filename") or ""
-                    engine_skipped = bool(result.get("skipped"))
+                    # 引擎「已有该歌」时会回 skipped + 空 path，只剩一个没有扩展名的 filename。
+                    # 直接存 filename 会让下一轮判定文件不存在、于是重复推送，所以这里归一成真实路径。
+                    raw_path = result.get("path") or result.get("filename") or ""
+                    engine_skipped_flag = bool(result.get("skipped"))
+                    file_path = resolve_download_path(raw_path) or (
+                        "" if engine_skipped_flag else raw_path
+                    )
                     db.upsert_track(
                         mon["id"],
                         cand,
                         status="downloaded",
-                        quality_actual=q.actual_quality_desc(ev) + ("（引擎已存在，跳过写入）" if engine_skipped else ""),
+                        quality_actual=q.actual_quality_desc(ev) + ("（引擎已存在，跳过写入）" if engine_skipped_flag else ""),
                         bitrate=ev["bitrate"],
                         file_path=file_path,
                     )
                     async with lock:
                         downloaded += 1
-                    local_log.append(f"  → 下载完成 {q.actual_quality_desc(ev)} {file_path}")
+                        if engine_skipped_flag:
+                            engine_skipped += 1
+                    local_log.append(
+                        f"  → {'引擎已有，未写新文件' if engine_skipped_flag else '下载完成'} "
+                        f"{q.actual_quality_desc(ev)} {file_path}"
+                    )
 
                 except Exception as exc:  # noqa: BLE001
                     async with lock:
@@ -444,28 +524,48 @@ async def run_monitor(db: Database, engine: Engine, mon: dict[str, Any]) -> dict
                     async with lock:
                         log_lines.extend(local_log)
 
-        await asyncio.gather(*(handle(s) for s in todo))
+        # 分批推送：一批全部结束（含重试）后才推下一批，避免把整份清单一次性灌给引擎
+        remaining = list(todo)
+        wave_no = 0
+        while remaining and budget > 0:
+            take = min(batch, budget, len(remaining))
+            wave, remaining = remaining[:take], remaining[take:]
+            budget -= take
+            wave_no += 1
+            log_lines.append(
+                f"—— 第 {wave_no} 批：推送 {len(wave)} 首"
+                + (f"，本批完成后继续" if remaining else "，本轮最后一批")
+            )
+            await asyncio.gather(*(handle(s) for s in wave))
+            if remaining and settings.download_batch_gap > 0:
+                await asyncio.sleep(settings.download_batch_gap)
+
+        log_lines.append(
+            f"══ 本轮结束：处理 {downloaded} 首（其中引擎侧已存在 {engine_skipped} 首、没有产生新文件），"
+            f"失败 {failed} 首，跳过 {skipped} 首"
+        )
 
         status = "ok" if failed == 0 else ("partial" if downloaded else "error")
         message = "；".join(warnings[:3])
         db.finish_run(run_id, status=status, found=found, new_items=new_items, downloaded=downloaded,
-                      skipped=skipped, failed=failed, message=message, log="\n".join(log_lines))
+                      skipped=skipped, failed=failed, engine_skipped=engine_skipped, message=message, log="\n".join(log_lines))
         _reschedule(db, mon)
         return {
             "run_id": run_id, "found": found, "new": new_items, "downloaded": downloaded,
-            "skipped": skipped, "failed": failed, "warnings": warnings[:10],
+            "engine_skipped": engine_skipped, "skipped": skipped, "failed": failed,
+            "warnings": warnings[:10],
         }
 
     except asyncio.CancelledError:
         # 容器停止或任务被取消时也必须收尾，否则网页会永久显示 running。
         db.finish_run(run_id, status="error", found=found, new_items=new_items, downloaded=downloaded,
-                      skipped=skipped, failed=failed, message="任务被取消，中断下载", log="\n".join(log_lines))
+                      skipped=skipped, failed=failed, engine_skipped=engine_skipped, message="任务被取消，中断下载", log="\n".join(log_lines))
         _reschedule(db, mon)
         raise
     except Exception as exc:  # noqa: BLE001
         log.exception("监控 %s 执行异常", mon.get("name"))
         db.finish_run(run_id, status="error", found=found, new_items=new_items, downloaded=downloaded,
-                      skipped=skipped, failed=failed, message=str(exc)[:400], log="\n".join(log_lines))
+                      skipped=skipped, failed=failed, engine_skipped=engine_skipped, message=str(exc)[:400], log="\n".join(log_lines))
         _reschedule(db, mon)
         return {"run_id": run_id, "found": found, "new": new_items, "downloaded": downloaded,
                 "skipped": skipped, "failed": failed, "error": str(exc)}
@@ -521,7 +621,7 @@ async def redownload(db: Database, engine: Engine, mon: dict[str, Any], song: di
         mon["id"], cand, status="downloaded",
         quality_actual=q.actual_quality_desc(ev),
         bitrate=ev["bitrate"],
-        file_path=result.get("path") or result.get("filename") or "",
+        file_path=resolve_download_path(result.get("path") or result.get("filename") or ""),
     )
     return {"ok": True, "message": "重试下载成功", "song": cand, "quality": q.actual_quality_desc(ev), "log": log_lines}
 

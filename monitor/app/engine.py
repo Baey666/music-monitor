@@ -20,9 +20,19 @@ log = logging.getLogger("monitor.engine")
 JSON_HEADERS = {"Accept": "application/json, text/plain, */*", "X-Requested-With": "XMLHttpRequest"}
 HTML_HEADERS = {"Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"}
 
+# 引擎登录成功时下发的会话 Cookie 名（路径 /music）。它是「已登录」的唯一凭据。
+SESSION_COOKIE = "music_dl_session"
+
 
 class EngineError(RuntimeError):
-    pass
+    """引擎调用失败。
+
+    `retryable=False` 表示「重试会造成重复副作用」，调用方不应盲目重试。
+    """
+
+    def __init__(self, message: str, *, retryable: bool = True) -> None:
+        super().__init__(message)
+        self.retryable = retryable
 
 
 class Engine:
@@ -247,7 +257,18 @@ class Engine:
             params["extra"] = json.dumps(song["extra"], ensure_ascii=False)
 
         c = await self.client()
-        r = await c.post(self.url("/download"), params=params, headers=JSON_HEADERS)
+        # 无损单曲动辄 30~80MB，上游是「存完盘才返回」，默认 30s 超时会误判失败后重推，
+        # 于是引擎侧同一条下载被记两次。这里单独给一个更宽的超时。
+        try:
+            r = await c.post(
+                self.url("/download"), params=params, headers=JSON_HEADERS, timeout=settings.download_timeout
+            )
+        except httpx.ReadTimeout as exc:
+            # 上游可能已经写盘成功，只是回包慢。再推一次会让引擎侧同一条歌记两条，所以禁止重试。
+            raise EngineError(
+                f"下载超时（{settings.download_timeout:.0f}s）—— 上游可能仍在写盘；本轮不再重推，下次运行会自动跳过已完成的部分",
+                retryable=False,
+            ) from exc
         if r.status_code >= 400:
             body = r.text[:300]
             raise EngineError(f"下载失败 HTTP {r.status_code}: {body}")
@@ -266,11 +287,38 @@ class Engine:
         return data
 
     # ------------------------------------------------------------------ 可选：引擎登录
+    @property
+    def logged_in(self) -> bool:
+        """是否持有会话凭据（不代表此刻仍然有效，要确认请用 session_ok()）。"""
+        return bool(self._session_cookies)
+
+    async def session_ok(self) -> bool:
+        """拿当前会话去访问一个受保护接口，确认它此刻真的有效。
+
+        上游未登录（或会话过期）时返回 `401 + {"error":"请先登录"}`，所以用状态码就能判。
+        """
+        if not self._session_cookies:
+            return False
+        c = await self.client()
+        try:
+            r = await c.get(self.url("/cookies"), headers=JSON_HEADERS, cookies=self._session_cookies)
+        except httpx.HTTPError as exc:
+            log.debug("会话校验请求失败: %s", exc)
+            return False
+        return r.status_code == 200
+
     async def login(self, username: str, password: str) -> dict[str, Any]:
         """登录引擎，换取会话 Cookie。
 
-        只有当你需要由本服务代为写入平台 Cookie / 修改引擎设置时才需要登录。
-        引擎的搜索与下载接口本身就是公开的。
+        ⚠️ 上游的两种结果必须在**响应本身**上分辨，不能看「cookie jar 有没有东西」：
+
+        | 结果 | 状态码 | 响应体 | Set-Cookie |
+        |---|---|---|---|
+        | 成功 | `302` | 空（跳回 /music） | `music_dl_session=...` |
+        | 失败 | `200` | 登录页 HTML | **无** |
+
+        而且 httpx 客户端会一直留着上一次成功登录的 Cookie —— 若拿「客户端 jar 非空」
+        当成功判据，**旧会话会让任何错误密码都显示登录成功**（本项目踩过这个坑）。
         """
         c = await self.client()
         try:
@@ -284,16 +332,34 @@ class Engine:
                 follow_redirects=False,
             )
         except httpx.HTTPError as exc:
-            return {"ok": False, "detail": str(exc)}
+            return {"ok": False, "detail": f"连不上引擎：{exc}"}
 
-        cookies = {k: v for k, v in r.cookies.items()}
-        if not cookies:
-            cookies = {k: v for k, v in c.cookies.items()}
-        self._session_cookies = cookies
-        ok = bool(cookies)
-        if ok:
-            self._username, self._password = username, password
-        return {"ok": ok, "detail": "已登录" if ok else "未取到会话 Cookie，请检查账号密码"}
+        token = r.cookies.get(SESSION_COOKIE)
+        if not token:
+            # 明确失败：清掉旧会话，否则后续接口会拿旧 Cookie 继续「看起来能用」
+            self._session_cookies = {}
+            c.cookies.clear()
+            return {
+                "ok": False,
+                "detail": f"账号或密码不正确（HTTP {r.status_code}，引擎返回了登录页而不是会话）",
+            }
+
+        previous = self._session_cookies
+        self._session_cookies = {SESSION_COOKIE: token}
+        if not await self.session_ok():
+            self._session_cookies = previous
+            return {"ok": False, "detail": "已拿到会话 Cookie，但访问受保护接口仍被拒绝，登录未生效"}
+
+        self._username, self._password = username, password
+        return {"ok": True, "detail": "已登录"}
+
+    async def logout(self) -> dict[str, Any]:
+        """丢弃本地会话凭据（不调上游登出接口）。"""
+        self._session_cookies = {}
+        self._username = self._password = ""
+        c = await self.client()
+        c.cookies.clear()
+        return {"ok": True, "detail": "已退出引擎登录"}
 
     async def push_cookies(self, mapping: dict[str, str]) -> dict[str, Any]:
         """把平台 Cookie 写入引擎（等价于在引擎设置页粘贴 Cookie）。
@@ -301,7 +367,7 @@ class Engine:
         这是拿到无损/高码率的关键：引擎按平台 Cookie 的会员等级决定实际音质。
         """
         if not self._session_cookies:
-            raise EngineError("尚未登录引擎，无法写入 Cookie（请在「设置」中填写引擎管理员账号）")
+            raise EngineError("尚未登录引擎，无法写入 Cookie（请在「设置 → 引擎连接」里登录引擎管理员账号）")
         c = await self.client()
         r = await c.post(
             self.url("/cookies"),
@@ -309,6 +375,9 @@ class Engine:
             headers={**JSON_HEADERS, "Content-Type": "application/json"},
             cookies=self._session_cookies,
         )
+        if r.status_code == 401:
+            self._session_cookies = {}
+            raise EngineError("引擎会话已过期（401），请重新登录引擎")
         if r.status_code >= 400:
             raise EngineError(f"写入 Cookie 失败 HTTP {r.status_code}: {r.text[:200]}")
         return r.json()
@@ -319,6 +388,8 @@ class Engine:
         c = await self.client()
         r = await c.get(self.url("/cookies"), headers=JSON_HEADERS, cookies=self._session_cookies)
         if r.status_code >= 400:
+            if r.status_code == 401:
+                self._session_cookies = {}
             return {}
         data = r.json()
         return data if isinstance(data, dict) else {}
@@ -333,6 +404,9 @@ class Engine:
             headers={**JSON_HEADERS, "Content-Type": "application/json"},
             cookies=self._session_cookies,
         )
+        if r.status_code == 401:
+            self._session_cookies = {}
+            raise EngineError("引擎会话已过期（401），请重新登录引擎")
         if r.status_code >= 400:
             raise EngineError(f"保存引擎设置失败 HTTP {r.status_code}: {r.text[:200]}")
         return r.json()

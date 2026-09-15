@@ -79,8 +79,13 @@ class Scheduler:
 
     def spawn(self, monitor_id: int) -> bool:
         """把某个监控丢进后台执行。已在本轮运行中则忽略。"""
-        if monitor_id in self._running:
-            return False
+        task = self._running.get(monitor_id)
+        if task is not None:
+            # 任务跑完了但还没被 tick 回收：不能算「正在执行」，否则刚跑完就点执行
+            # 会拿到「该监控正在执行中」而什么都不做（最长要等一个心跳才恢复）。
+            if not task.done():
+                return False
+            self._running.pop(monitor_id, None)
         task = asyncio.create_task(self._run(monitor_id), name=f"monitor-{monitor_id}")
         self._running[monitor_id] = task
         return True

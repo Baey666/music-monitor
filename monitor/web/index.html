@@ -115,7 +115,7 @@
     <div class="card">
       <h2>执行历史</h2>
       <div class="table-wrap"><table>
-        <thead><tr><th>时间</th><th>监控</th><th>状态</th><th>发现</th><th>新增</th><th>下载</th><th>跳过</th><th>失败</th><th>说明</th><th></th></tr></thead>
+        <thead><tr><th>时间</th><th>监控</th><th>状态</th><th>发现</th><th>新增</th><th>下载</th><th>引擎已有</th><th>跳过</th><th>失败</th><th>说明</th><th></th></tr></thead>
         <tbody id="run-body"></tbody>
       </table></div>
     </div>
@@ -168,13 +168,19 @@
         <button class="btn small" onclick="App.checkEngine()">重新检测</button>
       </div>
       <p class="hint">
-        引擎的搜索与下载接口本身是公开的，无需登录。只有「由本服务代写平台 Cookie / 修改引擎设置」才需要登录引擎管理员账号。
+        引擎的搜索与下载接口本身是公开的，<b>不登录也能正常监控下载</b>。
+        只有「由本服务代写平台 Cookie / 改引擎设置」才需要登录引擎管理员账号。
+      </p>
+      <p class="hint">
+        账号密码错的话，引擎会返回登录页而不是会话，这里会明确报错——<b>不会再出现「乱输也提示登录成功」</b>。
+        登录成功才会把账号密码记下来，之后服务重启会自动用它重新登录。
       </p>
       <div class="row">
         <input type="text" id="engine-username" placeholder="引擎管理员账号" style="max-width:220px">
         <input type="password" id="engine-password" placeholder="引擎管理员密码" style="max-width:220px">
         <button class="btn" onclick="App.engineLogin()">登录引擎</button>
         <button class="btn small" onclick="App.engineCookies()">查看已配置 Cookie</button>
+        <button class="btn small" onclick="App.engineLogout()">退出引擎登录</button>
       </div>
       <div id="engine-login-result" class="small muted" style="margin-top:10px"></div>
     </div>
@@ -277,6 +283,11 @@
       </label>
       <label class="field"><span>检查间隔（分钟）</span><input type="number" id="m-interval" min="10" value="360"></label>
       <label class="field"><span>单次最多下载（首）</span><input type="number" id="m-max" min="1" value="30"></label>
+      <p class="hint" style="grid-column:1/-1">
+        这就是「每轮任务的总上限」。执行时不会一次性把这么多首全推给引擎，而是<b>每批推几首、等这批全部落盘、再推下一批</b>
+        （批大小由服务端 <span class="mono">DOWNLOAD_BATCH</span> 控制，默认 8；批次间隔 <span class="mono">DOWNLOAD_BATCH_GAP</span>，默认 3 秒）。
+        想跑完一个几百首的大歌单，把这里调大即可。
+      </p>
       <label class="field"><span>包含关键词（逗号分隔，留空不限）</span><input type="text" id="m-include" placeholder="如：周杰伦,林俊杰"></label>
       <label class="field"><span>排除关键词</span><input type="text" id="m-exclude" placeholder="如：伴奏,DJ版,翻唱"></label>
     </div>

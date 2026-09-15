@@ -40,7 +40,15 @@ async def lifespan(app: FastAPI):
     password = db.get_setting("engine_password") or ""
     if username:
         result = await engine.login(str(username), str(password))
-        log.info("引擎登录：%s", result.get("detail"))
+        if result.get("ok"):
+            log.info("已用保存的账号恢复引擎会话：%s", username)
+        else:
+            # 不要吞掉失败 —— 以前这里无论真假都写「引擎登录：已登录」，
+            # 结果 Cookie 代写一直 401，看上去像「账号密码固化不下来」
+            log.warning(
+                "用保存的账号 %s 恢复引擎会话失败：%s（可在「设置 → 引擎连接」重新登录）",
+                username, result.get("detail"),
+            )
 
     await scheduler.start()
     try:

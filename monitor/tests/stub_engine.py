@@ -8,12 +8,30 @@
 from __future__ import annotations
 
 import json
+import os
+from pathlib import Path
 from typing import Any
+from urllib.parse import parse_qs
 
 from fastapi import FastAPI, Request
-from fastapi.responses import JSONResponse, PlainTextResponse
+from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse, RedirectResponse
 
 app = FastAPI()
+
+# 假的「引擎下载目录」——对应 monitor 只读挂载的 /downloads（见 smoke_test 里的 DOWNLOADS_MOUNT）
+STUB_DOWNLOADS = Path(os.getenv("DOWNLOADS_MOUNT") or "/tmp/stub-downloads")
+
+# 这些 id 当作「引擎库里已经有了」：下载时回 skipped + 空 path，但文件其实在盘上
+ALREADY_ON_DISK: set[str] = set()
+
+
+def _touch_download(file_name: str) -> None:
+    """模拟引擎把文件落盘，这样 monitor 的 _file_exists 才走得到真实分支。"""
+    try:
+        STUB_DOWNLOADS.mkdir(parents=True, exist_ok=True)
+        (STUB_DOWNLOADS / file_name).write_bytes(b"stub")
+    except OSError:
+        pass
 
 # 每个 (source, id) 对应一个"歌单"，用于 /playlist
 PLAYLISTS: dict[str, list[dict[str, Any]]] = {
@@ -25,6 +43,10 @@ PLAYLISTS: dict[str, list[dict[str, Any]]] = {
     "netease:3778678": [
         {"id": "s4", "source": "netease", "name": "起风了", "artist": "买辣椒也用券", "album": "起风了", "duration": 325},
     ],
+    # 专门用来验证「引擎库里已有这首歌」的路径：下载时回 skipped + 空 path
+    "netease:already_have": [
+        {"id": "s9", "source": "netease", "name": "富士山下", "artist": "陈奕迅", "album": "What's Going On…?", "duration": 258},
+    ],
 }
 
 # 每首歌的 inspect 结果：故意让 s2 只有 128kbps，用来验证"跨平台补源"
@@ -34,6 +56,7 @@ INSPECT: dict[str, dict[str, Any]] = {
     "netease:s3": {"valid": True, "url": "https://cdn.example.com/s3.flac", "size": "28.0 MB", "bitrate": "921 kbps"},
     "netease:s4": {"valid": False, "url": "", "size": "", "bitrate": "-"},
     "netease:s5": {"valid": True, "url": "https://cdn.example.com/s5.flac", "size": "26.4 MB", "bitrate": "905 kbps"},
+    "netease:s9": {"valid": True, "url": "https://cdn.example.com/s9.flac", "size": "51.1 MB", "bitrate": "1573 kbps"},
     # 换源后拿到的 QQ 版本
     "qq:q2": {"valid": True, "url": "https://cdn.example.com/q2.flac", "size": "30.2 MB", "bitrate": "902 kbps"},
 }
@@ -171,10 +194,54 @@ async def download(request: Request):
     DOWNLOADS.append(params)
     name = params.get("name", "Unknown")
     artist = params.get("artist", "Unknown")
+    ext = "mp3" if params.get("source") == "x" else "flac"
+    file_name = f"{name} - {artist}.{ext}"
+
+    # 真实上游「库里已经有这首歌」时的行为：status=ok + skipped=true + **path 是空字符串**，
+    # 只剩一个没有扩展名的 filename。monitor 必须能靠它把真实文件找回来，
+    # 否则下一轮会判定「文件不存在」而重复推送（线上就是这么堆出 266 条 skipped 的）。
+    if params.get("id") in ALREADY_ON_DISK:
+        _touch_download(file_name)
+        return {"status": "ok", "saved": True, "skipped": True, "path": "",
+                "filename": f"{name} - {artist}"}
+
+    _touch_download(file_name)
     return {
         "status": "ok",
         "saved": True,
-        "path": f"data/downloads/{name} - {artist}.{('flac' if params.get('source') != 'x' else 'mp3')}",
-        "filename": f"{name} - {artist}.flac",
+        "path": f"data/downloads/{file_name}",
+        "filename": file_name,
         "skipped": False,
     }
+
+
+# --------------------------------------------------------------------------- 登录
+#
+# 复刻真实上游的两种结果（这是本项目踩过的坑，务必保持与线上一致）：
+#   成功 → 302 + Set-Cookie: music_dl_session=...
+#   失败 → 200 + 登录页 HTML，**不带** Set-Cookie
+ENGINE_USER = "admin"
+ENGINE_PASSWORD = "correct-horse"
+SESSIONS: set[str] = set()
+
+
+@app.post("/music/login")
+async def login(request: Request):
+    # 手动解析表单，不走 request.form() —— 那个需要额外装 python-multipart，
+    # 测试环境不该为一个假服务引入依赖。
+    raw = (await request.body()).decode("utf-8", "replace")
+    form = {k: v[0] for k, v in parse_qs(raw).items()}
+    if form.get("username") == ENGINE_USER and form.get("password") == ENGINE_PASSWORD:
+        token = "stub-session-token"
+        SESSIONS.add(token)
+        return RedirectResponse("/music", status_code=302,
+                                headers={"Set-Cookie": f"music_dl_session={token}; Path=/music; HttpOnly"})
+    return HTMLResponse("<!DOCTYPE html><html><head><title>登录 music-dl</title></head>"
+                        "<body>账号或密码错误</body></html>", status_code=200)
+
+
+@app.get("/music/cookies")
+async def cookies(request: Request):
+    if request.cookies.get("music_dl_session") not in SESSIONS:
+        return JSONResponse({"error": "请先登录"}, status_code=401)
+    return {"netease": "MUSIC_U=stub", "qq": "uin=stub"}

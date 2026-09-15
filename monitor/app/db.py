@@ -73,11 +73,17 @@ CREATE TABLE IF NOT EXISTS runs (
     downloaded  INTEGER NOT NULL DEFAULT 0,
     skipped     INTEGER NOT NULL DEFAULT 0,
     failed      INTEGER NOT NULL DEFAULT 0,
+    engine_skipped INTEGER NOT NULL DEFAULT 0,      -- 其中「引擎库里已有、没产生新文件」的数量
     message     TEXT    NOT NULL DEFAULT '',
     log         TEXT    NOT NULL DEFAULT ''
 );
 CREATE INDEX IF NOT EXISTS idx_runs_monitor ON runs(monitor_id, id DESC);
 """
+
+# 增量迁移：老库补列，避免升级后启动即报错。SQLite 不支持 ADD COLUMN IF NOT EXISTS。
+_MIGRATIONS: list[tuple[str, str, str]] = [
+    ("runs", "engine_skipped", "ALTER TABLE runs ADD COLUMN engine_skipped INTEGER NOT NULL DEFAULT 0"),
+]
 
 
 def now_iso() -> str:
@@ -93,6 +99,16 @@ class Database:
         self._conn.execute("PRAGMA foreign_keys=ON")
         with self._lock:
             self._conn.executescript(_SCHEMA)
+            self._conn.commit()
+        self._migrate()
+
+    def _migrate(self) -> None:
+        """给老库补上后加的列（新建的库已经在 _SCHEMA 里带了）。"""
+        with self._lock:
+            for table, column, ddl in _MIGRATIONS:
+                cols = {row["name"] for row in self._conn.execute(f"PRAGMA table_info({table})")}
+                if column not in cols:
+                    self._conn.execute(ddl)
             self._conn.commit()
 
     # ---------------- 通用 ----------------
@@ -245,7 +261,7 @@ class Database:
     def finish_run(self, run_id: int, **kw: Any) -> None:
         self.execute(
             """UPDATE runs SET finished_at = ?, status = ?, found = ?, new_items = ?,
-               downloaded = ?, skipped = ?, failed = ?, message = ?, log = ? WHERE id = ?""",
+               downloaded = ?, skipped = ?, failed = ?, engine_skipped = ?, message = ?, log = ? WHERE id = ?""",
             (
                 now_iso(),
                 kw.get("status", "ok"),
@@ -254,6 +270,7 @@ class Database:
                 kw.get("downloaded", 0),
                 kw.get("skipped", 0),
                 kw.get("failed", 0),
+                kw.get("engine_skipped", 0),
                 kw.get("message", "")[:500],
                 kw.get("log", "")[:20000],
                 run_id,
@@ -327,9 +344,16 @@ class Database:
             (ts, ts, monitor_id, song.get("source", ""), str(song.get("id", ""))),
         )
 
-    # 跨监控的「已下载」指纹，用于避免同一首歌被多个监控重复下载
-    def downloaded_fingerprints(self) -> set[str]:
-        rows = self.query("SELECT name, artist FROM tracks WHERE status = 'downloaded'")
+    # 「已下载」指纹（歌名+歌手）。换源后曲目会挂在新 source:id 下，
+    # 下一轮用 (source, id) 就对不上了，只能靠指纹认出「这首其实已经下过了」。
+    def downloaded_fingerprints(self, monitor_id: int | None = None) -> set[str]:
+        if monitor_id:
+            rows = self.query(
+                "SELECT name, artist FROM tracks WHERE status = 'downloaded' AND monitor_id = ?",
+                (monitor_id,),
+            )
+        else:
+            rows = self.query("SELECT name, artist FROM tracks WHERE status = 'downloaded'")
         return {_fingerprint(r["name"], r["artist"]) for r in rows}
 
     def list_tracks(

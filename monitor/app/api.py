@@ -75,7 +75,13 @@ async def health() -> dict[str, Any]:
     eng = await engine.healthz()
     return {
         "version": __version__,
-        "engine": {"url": engine.base + engine.prefix, **eng},
+        "engine": {
+            "url": engine.base + engine.prefix,
+            # 「有账号」不等于「会话有效」，两者分开报，免得又出现「看着登录成功其实没登上」
+            "logged_in": engine.logged_in,
+            "session_ok": await engine.session_ok() if engine.logged_in else False,
+            **eng,
+        },
         "scheduler": scheduler.status(),
         "tracks": db.track_stats(),
         "monitors": len(db.list_monitors()),
@@ -314,11 +320,45 @@ async def engine_settings() -> dict[str, Any]:
 
 @router.post("/engine/login")
 async def engine_login(payload: LoginIn) -> dict[str, Any]:
+    """登录引擎。
+
+    ⚠️ 只有**真正拿到并验证过会话**才落库。上游失败时返回的是 200 + 登录页，
+    以前这里把「cookie jar 非空」当成功，于是乱输的账号密码也会显示「登录成功」
+    并覆盖掉原本正确的凭据 —— 这就是「账号密码固化不下来」的根因。
+    """
     result = await engine.login(payload.username, payload.password)
     if result["ok"]:
         db.set_setting("engine_username", payload.username)
         db.set_setting("engine_password", payload.password)
+        # 顺手报一下这个账号在引擎里配好了哪些平台 Cookie，方便判断会员音质能不能拿到
+        result["configured"] = sorted((await engine.get_cookies()).keys())
+    else:
+        # 失败时不动已保存的凭据（原来的可能是对的），让用户看清原因后重试
+        result["saved_username"] = db.get_setting("engine_username") or ""
     return result
+
+
+@router.post("/engine/logout")
+async def engine_logout() -> dict[str, Any]:
+    """退出引擎登录：丢掉本地会话与已保存的账号密码。
+
+    没有这个出口的话，一个错误的旧会话会一直挂在连接池里，
+    后续接口拿它去请求都会「看起来能用」，错误无法暴露也无法清除。
+    """
+    db.set_setting("engine_username", "")
+    db.set_setting("engine_password", "")
+    return await engine.logout()
+
+
+@router.get("/engine/session")
+async def engine_session() -> dict[str, Any]:
+    """引擎会话现状：是否持有凭据、此刻是否仍然有效。"""
+    logged_in = engine.logged_in
+    return {
+        "logged_in": logged_in,
+        "session_ok": await engine.session_ok() if logged_in else False,
+        "saved_username": db.get_setting("engine_username") or "",
+    }
 
 
 @router.get("/engine/cookies")
@@ -350,9 +390,15 @@ async def engine_save_settings(payload: dict[str, Any]) -> dict[str, Any]:
 # --------------------------------------------------------------------------- 本服务设置
 @router.get("/settings")
 async def settings_get() -> dict[str, Any]:
-    return {"settings": db.all_settings(), "limits": {
+    data = db.all_settings()
+    # 引擎管理员密码只用于服务端自动重登，不回传给浏览器
+    saved_password = data.pop("engine_password", "")
+    return {"settings": data, "engine_password_saved": bool(saved_password), "limits": {
         "tick_seconds": settings.tick_seconds,
         "download_concurrency": settings.download_concurrency,
+        "download_batch": settings.download_batch,
+        "download_batch_gap": settings.download_batch_gap,
+        "download_timeout": settings.download_timeout,
         "max_downloads_per_run": settings.max_downloads_per_run,
         "engine_url": engine.base + engine.prefix,
     }}
@@ -372,7 +418,13 @@ async def settings_engine_login() -> dict[str, Any]:
     password = db.get_setting("engine_password") or ""
     if not username:
         raise HTTPException(400, "尚未保存引擎管理员账号")
-    return await engine.login(username, password)
+    result = await engine.login(str(username), str(password))
+    if not result["ok"]:
+        # 保存的凭据已经不可用，直接清掉，免得下次开机又拿它去撞
+        db.set_setting("engine_username", "")
+        db.set_setting("engine_password", "")
+        result["detail"] = f"已保存的引擎账号已失效并清除：{result['detail']}"
+    return result
 
 
 # --------------------------------------------------------------------------- 工具
