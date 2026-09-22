@@ -1,3 +1,8 @@
+此版本停止维护了，已经有人根据现有功能拓展出新功能了
+https://github.com/assCub/music-monitor-LX
+
+
+
 # music-monitor
 
 一个跑在 NAS 上的音乐自动下载助手。你告诉它「我要盯什么」，它就定时去看，有新的就帮你下到硬盘里。
